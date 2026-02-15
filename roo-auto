@@ -1,0 +1,347 @@
+#!/bin/bash
+# Roo Orchestrator Wrapper Script - AUTOMATED VERSION
+# Provides convenient aliases for automated execution
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORCHESTRATOR="$SCRIPT_DIR/roo-orchestrator-auto.py"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+NC='\033[0m' # No Color
+
+function print_usage() {
+    cat << EOF
+${BLUE}Roo Orchestrator CLI - AUTOMATED VERSION${NC}
+
+Usage: roo-auto <command> [options]
+
+Commands:
+    ${GREEN}Execution Commands:${NC}
+    start <jira-id> <type> [mode]    Start new automated task
+                                     mode: auto|manual|vscode (default: auto)
+    continue <jira-id> [mode]        Continue existing task
+    run <jira-id> <phase> [mode]     Run specific phase
+    
+    ${GREEN}Management Commands:${NC}
+    status <jira-id>                 Show task status
+    reset <jira-id>                  Reset task state
+    list                             List all active tasks
+    
+    ${GREEN}Utility Commands:${NC}
+    help                             Show this help
+    config                           Show current configuration
+    test                             Test automation setup
+
+Task Types:
+    feature    - Feature development (6 phases)
+    bug        - Bug fix (5 phases)
+    spike      - Research spike (4 phases)
+
+Execution Modes:
+    auto       - Automatic via Roo Code CLI (default)
+    manual     - Manual copy-paste (original behavior)
+    vscode     - Automatic via VS Code DevGPT Cline API
+
+Examples:
+    ${YELLOW}# Fully automated feature${NC}
+    roo-auto start PROJ-123 feature auto
+    
+    ${YELLOW}# Manual mode (original)${NC}
+    roo-auto start PROJ-123 feature manual
+    
+    ${YELLOW}# Via VS Code API${NC}
+    roo-auto start PROJ-123 feature vscode
+    
+    ${YELLOW}# Continue existing (auto mode)${NC}
+    roo-auto continue PROJ-123 auto
+    
+    ${YELLOW}# Check status${NC}
+    roo-auto status PROJ-123
+    
+    ${YELLOW}# Run specific phase${NC}
+    roo-auto run PROJ-123 implementation auto
+
+Environment Variables:
+    ROO_WORKSPACE        Workspace directory (default: current directory)
+    ROO_MAX_TOKENS       Your maxTokens setting (default: 8192)
+    ROO_EXECUTION_MODE   Default execution mode (default: auto)
+    VSCODE_API_URL       VS Code API URL (default: http://localhost:3000)
+
+EOF
+}
+
+function check_orchestrator() {
+    if [[ ! -f "$ORCHESTRATOR" ]]; then
+        echo -e "${RED}Error: roo-orchestrator-auto.py not found at $ORCHESTRATOR${NC}"
+        exit 1
+    fi
+}
+
+function get_execution_mode() {
+    local mode="${1:-${ROO_EXECUTION_MODE:-auto}}"
+    case "$mode" in
+        auto|a)
+            echo "roo-cli"
+            ;;
+        manual|m)
+            echo "manual"
+            ;;
+        vscode|v|vs)
+            echo "vscode-api"
+            ;;
+        *)
+            echo -e "${YELLOW}Unknown mode '$mode', using 'auto'${NC}" >&2
+            echo "roo-cli"
+            ;;
+    esac
+}
+
+function cmd_start() {
+    local jira_id="$1"
+    local task_type="$2"
+    local exec_mode=$(get_execution_mode "$3")
+    
+    if [[ -z "$jira_id" ]] || [[ -z "$task_type" ]]; then
+        echo -e "${RED}Error: jira-id and type required${NC}"
+        echo "Usage: roo-auto start <jira-id> <type> [mode]"
+        exit 1
+    fi
+    
+    local mode_display
+    case "$exec_mode" in
+        roo-cli) mode_display="AUTOMATED (Roo CLI)" ;;
+        vscode-api) mode_display="AUTOMATED (VS Code API)" ;;
+        manual) mode_display="MANUAL" ;;
+    esac
+    
+    echo -e "${GREEN}🚀 Starting $mode_display execution${NC}"
+    echo -e "${BLUE}Task: $jira_id${NC}"
+    echo -e "${BLUE}Type: $task_type${NC}"
+    echo -e "${BLUE}Mode: $exec_mode${NC}"
+    echo ""
+    
+    python3 "$ORCHESTRATOR" \
+        --jira "$jira_id" \
+        --type "$task_type" \
+        --execution-mode "$exec_mode" \
+        --max-tokens "${ROO_MAX_TOKENS:-8192}" \
+        ${ROO_WORKSPACE:+--workspace "$ROO_WORKSPACE"}
+}
+
+function cmd_continue() {
+    local jira_id="$1"
+    local exec_mode=$(get_execution_mode "$2")
+    
+    if [[ -z "$jira_id" ]]; then
+        echo -e "${RED}Error: jira-id required${NC}"
+        echo "Usage: roo-auto continue <jira-id> [mode]"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}▶️  Continuing task: $jira_id${NC}"
+    echo -e "${BLUE}Mode: $exec_mode${NC}"
+    echo ""
+    
+    python3 "$ORCHESTRATOR" \
+        --jira "$jira_id" \
+        --execution-mode "$exec_mode" \
+        --max-tokens "${ROO_MAX_TOKENS:-8192}" \
+        ${ROO_WORKSPACE:+--workspace "$ROO_WORKSPACE"}
+}
+
+function cmd_run() {
+    local jira_id="$1"
+    local phase="$2"
+    local exec_mode=$(get_execution_mode "$3")
+    
+    if [[ -z "$jira_id" ]] || [[ -z "$phase" ]]; then
+        echo -e "${RED}Error: jira-id and phase required${NC}"
+        echo "Usage: roo-auto run <jira-id> <phase> [mode]"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}▶️  Running phase '$phase' for: $jira_id${NC}"
+    echo -e "${BLUE}Mode: $exec_mode${NC}"
+    echo ""
+    
+    python3 "$ORCHESTRATOR" \
+        --jira "$jira_id" \
+        --phase "$phase" \
+        --execution-mode "$exec_mode" \
+        --max-tokens "${ROO_MAX_TOKENS:-8192}" \
+        ${ROO_WORKSPACE:+--workspace "$ROO_WORKSPACE"}
+}
+
+function cmd_status() {
+    local jira_id="$1"
+    
+    if [[ -z "$jira_id" ]]; then
+        echo -e "${RED}Error: jira-id required${NC}"
+        echo "Usage: roo-auto status <jira-id>"
+        exit 1
+    fi
+    
+    python3 "$ORCHESTRATOR" \
+        --jira "$jira_id" \
+        --status \
+        ${ROO_WORKSPACE:+--workspace "$ROO_WORKSPACE"}
+}
+
+function cmd_reset() {
+    local jira_id="$1"
+    
+    if [[ -z "$jira_id" ]]; then
+        echo -e "${RED}Error: jira-id required${NC}"
+        echo "Usage: roo-auto reset <jira-id>"
+        exit 1
+    fi
+    
+    echo -e "${YELLOW}⚠️  Resetting task: $jira_id${NC}"
+    read -p "Are you sure? This will delete all progress (y/N): " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        python3 "$ORCHESTRATOR" \
+            --jira "$jira_id" \
+            --reset \
+            ${ROO_WORKSPACE:+--workspace "$ROO_WORKSPACE"}
+    else
+        echo "Cancelled"
+    fi
+}
+
+function cmd_list() {
+    local workspace="${ROO_WORKSPACE:-.}"
+    echo -e "${BLUE}🤖 Active Automated Orchestrator Tasks:${NC}\n"
+    
+    if ! ls "$workspace"/.roo-state-*.json 1> /dev/null 2>&1; then
+        echo "No active tasks found"
+        exit 0
+    fi
+    
+    for state_file in "$workspace"/.roo-state-*.json; do
+        if [[ -f "$state_file" ]]; then
+            local jira_id=$(basename "$state_file" | sed 's/^\.roo-state-//; s/\.json$//')
+            local task_type=$(python3 -c "import json; print(json.load(open('$state_file'))['task_type'])" 2>/dev/null || echo "unknown")
+            local completed=$(python3 -c "import json; print(len(json.load(open('$state_file'))['phases_completed']))" 2>/dev/null || echo "0")
+            local exec_history=$(python3 -c "import json; h=json.load(open('$state_file')).get('execution_history',[]); print(h[-1]['execution_mode'] if h else 'unknown')" 2>/dev/null || echo "unknown")
+            
+            echo -e "${GREEN}$jira_id${NC} ($task_type)"
+            echo "  Progress: $completed phases completed"
+            echo "  Last execution: $exec_history"
+            echo "  State file: $state_file"
+            echo
+        fi
+    done
+}
+
+function cmd_config() {
+    echo -e "${BLUE}Current Configuration:${NC}\n"
+    echo "Workspace:      ${ROO_WORKSPACE:-.}"
+    echo "Max Tokens:     ${ROO_MAX_TOKENS:-8192}"
+    echo "Execution Mode: ${ROO_EXECUTION_MODE:-auto (roo-cli)}"
+    echo "VS Code API:    ${VSCODE_API_URL:-http://localhost:3000}"
+    echo ""
+    echo -e "${YELLOW}To change these, set environment variables:${NC}"
+    echo "export ROO_WORKSPACE=/path/to/workspace"
+    echo "export ROO_MAX_TOKENS=8192"
+    echo "export ROO_EXECUTION_MODE=auto|manual|vscode"
+    echo "export VSCODE_API_URL=http://localhost:3000"
+}
+
+function cmd_test() {
+    echo -e "${BLUE}🧪 Testing Automation Setup...${NC}\n"
+    
+    # Test Python
+    echo -n "Python 3: "
+    if command -v python3 &> /dev/null; then
+        echo -e "${GREEN}✓ Found$(python3 --version)${NC}"
+    else
+        echo -e "${RED}✗ Not found${NC}"
+    fi
+    
+    # Test orchestrator
+    echo -n "Orchestrator: "
+    if [[ -f "$ORCHESTRATOR" ]]; then
+        echo -e "${GREEN}✓ Found${NC}"
+    else
+        echo -e "${RED}✗ Not found at $ORCHESTRATOR${NC}"
+    fi
+    
+    # Test Roo CLI
+    echo -n "Roo Code CLI: "
+    if command -v roo-code &> /dev/null; then
+        echo -e "${GREEN}✓ Found${NC}"
+    else
+        echo -e "${YELLOW}⚠ Not found (needed for 'auto' mode)${NC}"
+    fi
+    
+    # Test VS Code
+    echo -n "VS Code: "
+    if pgrep -x "Visual Studio Code" > /dev/null || pgrep -x "code" > /dev/null; then
+        echo -e "${GREEN}✓ Running${NC}"
+    else
+        echo -e "${YELLOW}⚠ Not running (needed for 'vscode' mode)${NC}"
+    fi
+    
+    # Test VS Code API
+    echo -n "VS Code API: "
+    if curl -s "${VSCODE_API_URL:-http://localhost:3000}/health" &> /dev/null; then
+        echo -e "${GREEN}✓ Available${NC}"
+    else
+        echo -e "${YELLOW}⚠ Not available at ${VSCODE_API_URL:-http://localhost:3000}${NC}"
+    fi
+    
+    echo ""
+    echo -e "${BLUE}Recommended Setup:${NC}"
+    echo "  ✓ Python 3 (required)"
+    echo "  ✓ Orchestrator script (required)"
+    echo "  ✓ Roo Code CLI (for 'auto' mode) OR"
+    echo "  ✓ VS Code + DevGPT Cline (for 'vscode' mode)"
+    echo ""
+    echo "You can always use 'manual' mode without any setup!"
+}
+
+# Main command router
+check_orchestrator
+
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+    start)
+        cmd_start "$@"
+        ;;
+    continue|cont|resume)
+        cmd_continue "$@"
+        ;;
+    run|phase)
+        cmd_run "$@"
+        ;;
+    status|st)
+        cmd_status "$@"
+        ;;
+    reset)
+        cmd_reset "$@"
+        ;;
+    list|ls)
+        cmd_list
+        ;;
+    config|cfg)
+        cmd_config
+        ;;
+    test)
+        cmd_test
+        ;;
+    help|--help|-h)
+        print_usage
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $COMMAND${NC}\n"
+        print_usage
+        exit 1
+        ;;
+esac
