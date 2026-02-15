@@ -32,6 +32,7 @@ Required workflow:
 - Keep business rules out of presentational components.
 - Avoid copy-pasting query/mutation logic across multiple files.
 
+
 4. React best practices:
 - Use typed props and avoid `any`.
 - Keep components focused and small.
@@ -41,6 +42,205 @@ Required workflow:
 - Use memoization (`useMemo`, `useCallback`, `React.memo`) only when there is a clear render/perf reason.
 - Handle loading, error, empty, and success UI states explicitly.
 - Preserve accessibility: semantic elements, labels, keyboard behavior, and aria attributes where needed.
+
+4.1 State management rules (local vs global vs URL):
+- Default: keep state local to the component tree that owns it.
+- Server state: use RTK Query (do not copy server responses into Redux slices).
+- URL state: use React Router search params for shareable/bookmarkable state (filters, sort, pagination, selected tab, time range).
+- Global state (Redux slice) is allowed only when state must be shared across multiple routes or distant feature areas and must survive navigation.
+
+Decision guide (use the first match):
+A) Is it data fetched from the backend or derived from backend data?
+- Yes → RTK Query.
+
+B) Should the state be shareable via link, restored on refresh, or show up in browser history?
+- Yes → URL search params (React Router).
+
+C) Is it purely ephemeral UI state local to a component (modal open, accordion, input draft, hover, in-progress selection)?
+- Yes → local component state (`useState`/`useReducer`).
+
+D) Does it need to be shared by a small subtree (avoid prop drilling) but not globally across the app?
+- Yes → colocated context provider within the feature or route segment (feature-scoped context), or lift state to the nearest common parent.
+
+E) Does it need to be shared across multiple unrelated trees/routes (e.g., app shell layout, entitlements, global filters used on multiple pages)?
+- Yes → Redux slice.
+
+Global state examples (good fits):
+- Auth session snapshot needed by multiple routes (e.g., `userSid`, roles/entitlements), plus logout/reauth signals.
+- App shell UI that is persistent across routes (sidebar collapsed, theme, feature flags).
+- Cross-route global filters that multiple pages must read.
+
+Local/feature-scoped state examples (preferred):
+- Modals/sheets/dialog open state, drawers.
+- Form drafts and stepper state.
+- Row selection in a grid, local table column visibility.
+- Non-shareable UI toggles.
+
+Anti-patterns (avoid):
+- Storing RTK Query results in Redux slices (double source of truth).
+- Using Redux to avoid passing a couple props (global sprawl).
+- A single global “ui” slice that becomes a dumping ground for feature state.
+
+
+Auth + BFF note (Human-to-Web auth):
+- Treat auth as cross-cutting: store only the minimal global auth context (identity + entitlements + session flags).
+- Keep tokens/cookies handling inside the BFF; UI should not persist sensitive tokens.
+- Prefer RTK Query baseQuery hitting the BFF; BFF proxies to downstream services.
+
+4.2 Common patterns (copy/paste):
+
+A) URL state (filters/sort/pagination) via React Router search params
+- Use URL state when the user should be able to refresh/share/bookmark.
+
+```ts
+import { useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
+
+export function useTableQueryParams() {
+  const [params, setParams] = useSearchParams();
+
+  const state = useMemo(() => {
+    const page = Number(params.get("page") ?? "1");
+    const size = Number(params.get("size") ?? "25");
+    const sort = params.get("sort") ?? "createdAt:desc";
+    const q = params.get("q") ?? "";
+
+    return {
+      page: Number.isFinite(page) && page > 0 ? page : 1,
+      size: Number.isFinite(size) && size > 0 ? size : 25,
+      sort,
+      q,
+    };
+  }, [params]);
+
+  function patch(next: Partial<typeof state>) {
+    const merged = { ...state, ...next };
+    const nextParams = new URLSearchParams(params);
+
+    nextParams.set("page", String(merged.page));
+    nextParams.set("size", String(merged.size));
+    nextParams.set("sort", merged.sort);
+    if (merged.q) nextParams.set("q", merged.q);
+    else nextParams.delete("q");
+
+    setParams(nextParams, { replace: true });
+  }
+
+  return { ...state, patch };
+}
+```
+
+B) Feature-scoped state (avoid prop drilling without global Redux)
+- Use when multiple siblings in a feature need shared ephemeral state.
+
+```ts
+import React, { createContext, useContext, useMemo, useReducer } from "react";
+
+type State = {
+  isDetailsOpen: boolean;
+  selectedId: string | null;
+};
+
+type Action =
+  | { type: "openDetails"; id: string }
+  | { type: "closeDetails" };
+
+const initialState: State = { isDetailsOpen: false, selectedId: null };
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case "openDetails":
+      return { isDetailsOpen: true, selectedId: action.id };
+    case "closeDetails":
+      return { isDetailsOpen: false, selectedId: null };
+    default:
+      return state;
+  }
+}
+
+const Ctx = createContext<{ state: State; dispatch: React.Dispatch<Action> } | null>(null);
+
+export function FeatureProvider({ children }: { children: React.ReactNode }) {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const value = useMemo(() => ({ state, dispatch }), [state]);
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function useFeatureState() {
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error("useFeatureState must be used within FeatureProvider");
+  return ctx;
+}
+```
+
+C) RTK Query perf: subscribe to only what you need (`selectFromResult`)
+- Use when parent query data is large but a child only needs a small slice.
+
+```ts
+// Example: const { data } = useGetUsersQuery(args)
+const { user } = useGetUsersQuery(args, {
+  selectFromResult: ({ data }) => ({
+    user: data?.entities?.[userId] ?? null,
+  }),
+});
+```
+
+D) Minimal global auth slice (no tokens; BFF owns auth cookies)
+- Store only identity + entitlements + session flags needed app-wide.
+
+```ts
+import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+
+export type AuthStatus = "unknown" | "authenticated" | "unauthenticated";
+
+export type AuthState = {
+  status: AuthStatus;
+  userSid: string | null;
+  roles: string[];
+  entitlements: Record<string, unknown>;
+  lastVerifiedAt: number | null;
+};
+
+const initialState: AuthState = {
+  status: "unknown",
+  userSid: null,
+  roles: [],
+  entitlements: {},
+  lastVerifiedAt: null,
+};
+
+export const authSlice = createSlice({
+  name: "auth",
+  initialState,
+  reducers: {
+    setAuthenticated(
+      state,
+      action: PayloadAction<{ userSid: string; roles: string[]; entitlements: Record<string, unknown> }>
+    ) {
+      state.status = "authenticated";
+      state.userSid = action.payload.userSid;
+      state.roles = action.payload.roles;
+      state.entitlements = action.payload.entitlements;
+      state.lastVerifiedAt = Date.now();
+    },
+    setUnauthenticated(state) {
+      state.status = "unauthenticated";
+      state.userSid = null;
+      state.roles = [];
+      state.entitlements = {};
+      state.lastVerifiedAt = Date.now();
+    },
+  },
+});
+
+export const { setAuthenticated, setUnauthenticated } = authSlice.actions;
+export default authSlice.reducer;
+```
+
+Notes:
+- Prefer feature-scoped context before global Redux when the goal is only to avoid prop drilling.
+- Prefer URL params over Redux when state should be shareable and restorable.
+- Keep auth tokens/cookies out of UI state; rely on the BFF session.
 
 5. RTK Query best practices:
 - Use centralized API slices and inject endpoints instead of creating ad hoc fetch logic.
@@ -60,6 +260,7 @@ Required workflow:
 - Did I check MCP internal components before shadcn/custom?
 - Did I avoid duplicated JSX and logic?
 - Is RTK Query integrated using existing API patterns?
+- Did I choose the correct state location (RTK Query vs URL params vs local/feature context vs Redux slice)?
 - Are types complete and strict?
 - Are loading/error/empty states handled?
 - Is accessibility preserved?
@@ -74,6 +275,10 @@ Output requirements for each task:
 
 3. RTK Query impact:
 - List endpoints/tags/types added or reused.
+
+3.1 State placement:
+- List which state is local, which is URL-based, and which (if any) is global.
+- Justify any new Redux slice/state added.
 
 4. Final validation:
 - Confirm no avoidable duplication was introduced.

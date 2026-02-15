@@ -7,12 +7,14 @@ Use this prompt when diagnosing bugs, regressions, performance issues, or produc
 You are debugging a Java Spring Boot application.
 Follow these guard rails for every debugging task.
 
+This project uses a global ControllerAdvice and a standardized `ErrorResponseDTO` contract. Debugging must respect the existing exception-to-status mappings and error payload structure. Do not introduce ad-hoc error responses while fixing defects.
+
 Primary goals:
-1. Reproduce first, then fix.
-2. Isolate root cause, not symptoms.
-3. Minimize blast radius of code changes.
-4. Preserve architecture boundaries and module responsibilities.
-5. Leave evidence: tests, logs, and notes that prevent recurrence.
+1. Reproduce deterministically before modifying code.
+2. Classify the failure by layer (controller/service/repository/config/integration/DB).
+3. Prove the root cause with evidence (logs, failing test, SQL trace, config diff).
+4. Apply the smallest safe fix aligned with architecture and existing patterns.
+5. Prevent recurrence with tests or assertions at the correct layer.
 
 Architecture and scope constraints:
 1. Only work in these modules unless explicitly told otherwise:
@@ -38,9 +40,13 @@ Required debugging workflow:
 - Avoid broad refactors while root cause is unknown.
 
 3. Instrument safely:
-- Add temporary, structured debug logs at key boundaries (request entry, service decision points, repository calls).
-- Do not log secrets, tokens, PII, or full sensitive payloads.
-- Remove temporary noisy logs before finalizing unless they provide durable value.
+- Add temporary structured logs at key boundaries:
+  - Controller entry (path, correlation id, status).
+  - Service decision branches.
+  - Repository calls and query parameters (no sensitive values).
+- Enable SQL logging temporarily if data-layer behavior is suspected.
+- Never log tokens, credentials, full PII payloads, or secrets.
+- Remove temporary debug noise before finalizing unless it adds durable operational value.
 
 4. Root-cause validation:
 - Prove the root cause with a failing test, reproducible script, or clear before/after evidence.
@@ -53,11 +59,24 @@ Required debugging workflow:
 - Keep transaction boundaries in service layer.
 - Maintain Postgres/JPA compatibility and avoid introducing N+1/perf regressions.
 
+5.1 Error handling validation:
+- Confirm exceptions flow through ControllerAdvice.
+- Reuse existing `ErrorResponseDTO` factory methods.
+- Verify correct HTTP status mapping (400 vs 404 vs 409 vs 500 etc.).
+- Ensure no internal stack traces or SQL details leak to clients.
+
 6. Regression hardening:
 - Add or update tests at the lowest effective level:
   - Unit test for pure business or mapping logic.
   - Integration test for controller/service/repository interactions.
 - Add assertions for edge cases that exposed the bug.
+
+6.1 Data and transaction validation:
+- Verify transactional boundaries remain in service layer.
+- Confirm `@Transactional` semantics (readOnly vs write).
+- Validate no new N+1 queries were introduced.
+- Check query plans or logs if performance regression is involved.
+- Confirm database state consistency before and after fix.
 
 7. Validate end-to-end:
 - Re-run reproduction steps and confirm fix.
@@ -65,12 +84,15 @@ Required debugging workflow:
 - Ensure code remains Spotless-compatible.
 
 Debugging checklist before finalizing:
-- Did I reproduce the bug before changing code?
-- Did I identify and prove the root cause?
+- Was the issue reproduced with deterministic steps?
+- Was the root cause proven (not assumed)?
+- Was the failure layer correctly classified?
 - Is the fix minimal and architecture-consistent?
+- Are errors still routed via ControllerAdvice with correct status mapping?
 - Are sensitive fields excluded from logs?
+- Were transactions and JPA behavior validated?
 - Did I add/update tests covering the failure and key edge cases?
-- Did I verify no adjacent regressions?
+- Did I verify no adjacent regressions or performance degradation?
 
 Output requirements for each debugging task:
 1. Reproduction summary:

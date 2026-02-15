@@ -90,3 +90,152 @@ Output requirements for each debugging task:
 - Residual risks (if any).
 
 If reproduction is incomplete or environment-specific, stop and request missing details (sample request, headers, auth context, env diffs, stack traces, timing data).
+
+Python Debugging Guardrails Prompt (FastAPI + Python 3.13 + Poetry)
+
+Use this prompt when diagnosing API bugs, async issues, data inconsistencies, performance regressions, or production incidents in this repository.
+
+---
+
+You are debugging a Python 3.13 FastAPI service managed with Poetry.
+Follow these guard rails for every debugging task.
+
+Non-negotiable principles:
+1. Reproduce deterministically before modifying code.
+2. Classify the failure layer before implementing a fix.
+3. Prove root cause with concrete evidence (logs, test, trace, diff).
+4. Apply the smallest safe fix aligned with architecture.
+5. Remove temporary debug instrumentation before finalizing.
+6. Do not introduce new libraries or architectural layers while debugging.
+
+Failure layer classification (must identify first):
+- API layer (request parsing, validation, dependency injection, response_model mismatch)
+- Service/domain layer (business rule, state transition, validation logic)
+- Data layer (query/filter/pagination, transaction, N+1, connection/session handling)
+- Integration layer (external API/client timeout, schema drift, retry behavior)
+- Runtime layer (async misuse, blocking I/O, event loop starvation, concurrency/race)
+- Configuration layer (env vars, secrets, base URLs, CORS, middleware)
+
+Required debugging workflow:
+
+1. Deterministic reproduction
+- Capture:
+  - Endpoint + HTTP method
+  - Full request payload/query/path params
+  - Auth context/headers
+  - Environment (dev/test/prod-like)
+  - Relevant feature flags
+- Record exact expected vs actual behavior:
+  - Status code
+  - Response body
+  - Timing/performance deltas
+- Reduce to minimal failing scenario (test, script, curl, or request collection).
+
+2. State and contract validation
+- Confirm request model matches actual incoming payload.
+- Confirm response_model matches actual returned structure.
+- Validate 401 vs 403 behavior (unauthenticated vs unauthorized).
+- Confirm no silent None/null drift in optional fields.
+- Ensure no ad-hoc error payloads were introduced.
+
+3. Async and runtime validation
+- Verify all I/O paths are properly awaited.
+- Ensure no synchronous network/database calls exist in async endpoints.
+- Check dependency lifecycles:
+  - DB session scope
+  - Async HTTP client reuse
+  - Connection pooling
+- Validate no event loop blocking or starvation under load.
+
+4. Data and transaction validation
+- Confirm transactional boundaries (if applicable).
+- Validate no new N+1 queries were introduced.
+- Check query limits/pagination bounds.
+- Confirm database state consistency before and after fix.
+- Enable SQL logging temporarily if needed; remove after diagnosis.
+
+5. Instrument safely
+- Add temporary structured logs only at meaningful boundaries:
+  - Request entry/exit (path, method, status, duration)
+  - Service decision branches
+  - External calls (target, status, duration)
+  - Data-layer interactions (without sensitive values)
+- Preserve correlation/request ID if available.
+- Never log tokens, credentials, secrets, or full PII payloads.
+- Remove debug-only logs before finalizing unless they add durable operational value.
+
+6. Root cause proof
+- Demonstrate failing behavior via:
+  - Reproducible request OR
+  - Failing test OR
+  - Logged trace showing incorrect branch/query/config.
+- Show why the identified layer is responsible.
+- Confirm adjacent flows are not affected by the same trigger.
+
+7. Minimal fix implementation
+- Reuse existing routers/services/repositories/helpers/exception handlers.
+- Keep route handlers thin; fix logic in correct layer.
+- Preserve typing quality; do not introduce `Any`.
+- Maintain consistent exception-to-HTTP mapping.
+
+8. Regression hardening
+- Add/update tests at correct layer:
+  - Unit tests for domain/service logic.
+  - Integration/API tests for endpoint contract and status codes.
+  - Async/concurrency tests if timing-related.
+- Cover:
+  - Success path
+  - Validation errors
+  - Auth failures
+  - Not-found/conflict cases
+  - Edge cases that triggered the bug
+
+9. Performance and safety validation
+- Verify no performance regression introduced.
+- Confirm no unbounded loops or large object serialization.
+- Validate memory/resource cleanup (clients, sessions).
+
+Debugging completion checklist:
+- Was the issue reproduced with deterministic steps?
+- Was the failure layer clearly classified?
+- Was root cause proven (not assumed)?
+- Is the fix minimal and architecture-consistent?
+- Are async paths non-blocking and resource lifecycles correct?
+- Are API contracts and status mappings intact?
+- Are logs structured and free of secrets/PII?
+- Were tests added/updated to prevent recurrence?
+- Were temporary debug logs removed?
+
+Output requirements for each debugging task:
+
+1. Reproduction summary
+- Endpoint/method
+- Input/auth/environment
+- Expected vs actual behavior
+
+2. Failure classification
+- Identified layer
+- Why this layer is responsible
+
+3. Root cause evidence
+- File/module/function
+- Evidence (log snippet, failing test, trace)
+
+4. Fix summary
+- Files/functions changed
+- Why minimal and safe
+
+5. Validation evidence
+- Tests added/updated
+- Manual verification steps
+- Performance confirmation
+- Residual risks (if any)
+
+If reproduction is incomplete or environment-specific, stop and request:
+- Sample request payload
+- Headers/auth context
+- Environment variables (sanitized)
+- Relevant logs or stack traces
+- Timing/performance data
+
+Do not proceed with speculative fixes.

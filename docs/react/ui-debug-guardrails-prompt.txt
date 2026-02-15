@@ -4,88 +4,143 @@ Use this prompt when diagnosing UI bugs, state inconsistencies, API integration 
 
 ---
 
-You are debugging a React + Vite + TypeScript frontend with RTK Query.
-Follow these guard rails for every debugging task.
+You are debugging a React + Vite + TypeScript frontend with RTK Query and a BFF (Node/Express) layer.
 
-Primary goals:
-1. Reproduce first, then fix.
-2. Isolate whether issue is UI, state, cache, network, or backend contract.
-3. Preserve existing component and API-slice architecture.
-4. Apply the smallest safe fix and prevent recurrence.
-5. Keep accessibility and UX states correct after the fix.
+Non‑negotiable principles:
+1. Reproduce before modifying code.
+2. Prove the root cause category before fixing.
+3. Apply the smallest safe fix aligned with existing architecture.
+4. Do not introduce new global state, endpoints, or abstractions unless strictly required.
+5. Remove all temporary instrumentation before finalizing.
+
+Root cause categories (must classify first):
+- Rendering logic (props/state derivation/memoization issues)
+- Local vs global vs URL state misuse
+- RTK Query cache/invalidation/arg instability
+- API/BFF contract mismatch (request/response shape, auth headers/cookies, proxy behavior)
+  - Status drift (200 vs 204 vs 4xx/5xx), content-type, compression, CORS
+  - Missing/incorrect headers forwarded by BFF (Authorization, cookies, x-request-id, etc.)
+  - Env/base URL misrouting (proxy targets, path rewrites, trailing slashes)
+- Timing/race condition (effects, async updates, unmounted updates)
+- Performance/render loop
+- Styling/layout/accessibility regression
 
 Required debugging workflow:
-1. Reproduce deterministically:
-- Capture route, user actions, payloads, role/feature flags, browser, and environment.
-- Record expected vs actual behavior.
-- Reproduce with the smallest possible scenario.
 
-2. Localize the fault:
-- Identify category first:
-  - Rendering logic (component/props/state derivation)
-  - RTK Query data flow (endpoint args, tags, invalidation, stale cache)
-  - API contract mismatch (request/response schema drift)
-  - Timing/race condition (effects, async updates, unmounted updates)
-  - Styling/layout/accessibility regression
-- Confirm with React DevTools, browser network panel, and Redux state inspection.
+1. Deterministic reproduction
+- Capture route, query params, user role/entitlements, feature flags, environment, and exact steps.
+- Capture request payload + response body from Network tab.
+- Define expected vs actual behavior precisely.
+- Reduce to smallest failing scenario.
 
-3. RTK Query-specific checks:
-- Verify endpoint args are stable and correctly typed.
-- Confirm query keys/cache entries match expectations.
-- Validate `providesTags` and `invalidatesTags` behavior.
-- Check whether stale data persists due to missing invalidation or skipped refetch.
-- Ensure duplicate network requests are not triggered by render loops.
+2. State classification check (mandatory)
+- Is this server state? → RTK Query only.
+- Should it be shareable/bookmarkable? → URL search params.
+- Is it ephemeral UI state? → Local component state.
+- Is Redux being used only to avoid prop drilling? → Refactor to feature context.
 
-4. Instrument safely:
-- Add targeted temporary logs around:
+If state placement is incorrect, fix placement before anything else.
+
+3. RTK Query validation
+- Confirm endpoint args are stable (no inline objects causing re-fetch loops).
+- Validate cache key matches expectation.
+- Verify providesTags/invalidatesTags correctness.
+- Confirm stale data is not due to missing invalidation.
+- Ensure mutations do not trigger unintended refetch cascades.
+- Use selectFromResult if excessive rerenders are observed.
+
+4. Rendering/performance validation
+- Check for:
+  - Inline object/array props causing identity churn.
+  - Missing dependency arrays.
+  - Over‑broad dependency arrays.
+  - Unnecessary global state subscriptions.
+  - Infinite render loops.
+- Confirm React DevTools shows expected render frequency.
+
+5. Contract validation (UI ↔ BFF ↔ API)
+- Validate request shape matches TypeScript types (query params, path params, body).
+- Confirm response schema matches expectations (including 204/empty body semantics).
+- Ensure no silent undefined/null drift (backend optional fields, nullability, enum values).
+- Confirm auth/session assumptions:
+  - BFF owns cookies/session; UI should not persist tokens.
+  - Verify 401 vs 403 behavior (unauthenticated vs unauthorized) and UI handling.
+- Validate proxy correctness:
+  - Path rewrites, base URL, trailing slashes, and query param forwarding.
+  - Required headers forwarded (Authorization/cookies when applicable, correlation/request id).
+- Validate transport specifics when relevant:
+  - content-type + encoding (JSON vs text), gzip/br compression, and CORS preflight.
+
+6. Safe instrumentation
+- Add targeted logs only around:
   - Hook inputs/outputs
-  - Cache invalidation paths
-  - Mutation success/error handlers
-- Keep logs concise and remove temporary noise after diagnosis.
-- Never expose sensitive tokens or private user data.
+  - BFF request/response metadata (status code, route, request id, timing)
+  - Mutation handlers
+  - Invalidation paths
+- Never log tokens, cookies, or PII.
+- Remove all temporary logs before finalizing.
 
-5. Implement minimal fix:
-- Reuse existing hooks/components/selectors/endpoints before introducing new ones.
-- Keep business logic out of presentational components.
-- Avoid broad refactors unrelated to root cause.
-- Preserve TypeScript strictness; avoid `any` shortcuts.
+7. Minimal fix implementation
+- Reuse existing hooks/components/endpoints/selectors.
+- Do not introduce broad refactors unrelated to the root cause.
+- Preserve strict typing; do not introduce `any`.
+- Do not copy RTK Query results into Redux slices.
 
-6. Regression hardening:
-- Add/update tests closest to the failure:
-  - Component behavior tests for UI state transitions.
-  - RTK Query integration tests for cache/invalidation behavior.
-  - Utility/hook tests for transformation or selection logic.
-- Cover loading, error, empty, and success states when relevant.
+8. Regression hardening
+- Add/update tests closest to failure:
+  - Component behavior tests
+  - Hook tests
+  - RTK Query integration/cache tests
+- Cover loading, error, empty, and success states.
+- Validate URL param behavior if touched.
 
-7. Verify UX and accessibility:
-- Confirm keyboard flow, focus behavior, labels, and aria semantics were not broken.
-- Validate responsive behavior if layout was touched.
+9. Accessibility + UX validation
+- Confirm keyboard navigation and focus management.
+- Confirm aria semantics preserved.
+- Validate responsive layout if changed.
 
-Debugging checklist before finalizing:
-- Did I reproduce the bug with clear steps?
-- Did I prove whether root cause was UI, RTK Query/cache, or API contract?
-- Is the fix minimal and aligned with existing patterns?
-- Are loading/error/empty states still correct?
+Debugging completion checklist:
+- Was the bug reproduced with clear steps?
+- Was the root cause proven (not assumed)?
+- Is the state location correct (local vs URL vs RTK vs Redux)?
+- Is the fix minimal and pattern‑aligned?
 - Are types strict and explicit?
-- Are accessibility and keyboard interactions preserved?
-- Did I add/update tests to prevent recurrence?
+- Are unnecessary rerenders eliminated?
+- Are loading/error/empty states correct?
+- Are accessibility behaviors preserved?
+- Were temporary logs removed?
 
 Output requirements for each debugging task:
-1. Reproduction summary:
-- Route/user flow/input data/environment.
-- Expected vs actual behavior.
 
-2. Root cause:
-- File/component/hook/endpoint responsible.
-- Why it failed and trigger conditions.
+1. Reproduction summary
+- Route + query params
+- Role/feature flags
+- Input data
+- Expected vs actual
 
-3. Fix summary:
-- What changed and why it is minimal.
-- RTK Query cache/tag/invalidation impact.
+2. Root cause
+- Exact file/component/hook/endpoint
+- Category classification
+- Why it failed
 
-4. Validation evidence:
-- Tests added/updated and scenarios covered.
-- Manual checks performed (including accessibility/UX states).
-- Residual risks (if any).
+3. Fix summary
+- Code change explanation
+- Why minimal
+- RTK Query cache/tag impact
+- State placement validation
 
-If bug cannot be reproduced consistently, stop and request missing reproduction artifacts (recording, HAR, payload samples, feature flags, env values).
+4. Validation evidence
+- Tests added/updated
+- Manual verification steps
+- Performance confirmation (if relevant)
+- Accessibility confirmation
+- Residual risks (if any)
+
+If reproduction is inconsistent, stop and request:
+- HAR file
+- Payload samples
+- Feature flag values
+- Environment details
+- Screen recording
+
+Do not proceed with speculative fixes.

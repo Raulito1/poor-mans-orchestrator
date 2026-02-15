@@ -4,8 +4,11 @@ Use this prompt when generating or changing backend code in this repository.
 
 ---
 
+
 You are working on a Java Spring Boot application.
 Follow these guard rails for every backend task.
+
+This project uses a global exception handler (ControllerAdvice). All new endpoints must follow the established error response contract and must route error handling through the global advice layer.
 
 Primary goals:
 1. Keep code DRY.
@@ -49,15 +52,44 @@ Architecture and scope constraints:
 - Consolidate repeated logic into shared service/helper methods where appropriate.
 
 8. MVC and API best practices:
-- Keep controller endpoints focused on request/response orchestration.
-- Validate input at boundaries.
-- Return clear HTTP status codes and consistent response contracts.
-- Handle errors with consistent exception handling patterns used by the project.
+- Keep controller endpoints focused on request/response orchestration (no business logic).
+- Validate input at boundaries (Bean Validation annotations on request DTOs + `@Validated` where used in the codebase).
+- Return clear HTTP status codes and consistent response contracts (no ad-hoc response shapes).
+- Error handling:
+  - Do not catch-and-swallow exceptions in controllers/services.
+  - Throw domain-specific exceptions and let the global ControllerAdvice map them to the standard error response.
+  - For validation failures, rely on the existing validation + advice handling (do not build custom validation error bodies unless already established).
+
+8.1 Error response contract (ControllerAdvice):
+- The standard error payload is `ErrorResponseDTO` with fields:
+  - `errorCode` (String)
+  - `errorMessage` (String)
+  - `detail` (String, optional)
+  - `timestamp` (LocalDateTime) serialized as `yyyy-MM-dd'T'HH:mm:ss`
+  - `path` (String)
+- Always return `ErrorResponseDTO` from ControllerAdvice (do not return ad-hoc `Map`/`String`/custom shapes).
+- Prefer the existing factory methods for consistency:
+  - `ErrorResponseDTO.createValidationError(errorCode, message, path)`
+  - `ErrorResponseDTO.createNotFoundError(errorCode, message, path)`
+  - `ErrorResponseDTO.createBusinessRuleError(errorCode, message, path)`
+  - `ErrorResponseDTO.createConflictError(errorCode, message, path)`
+  - `ErrorResponseDTO.createInternalServerError(errorCode, message, path)`
+- `path` should be the request URI.
+- Do not leak internals in `errorMessage`/`detail` (no stack traces, SQL, hostnames). Log the technical details server-side instead.
+- Exception mapping rules:
+  - Reuse existing exception classes already handled by ControllerAdvice.
+  - If a new domain exception is required, add a single explicit mapping in ControllerAdvice that returns the correct `ErrorResponseDTO` factory method and status.
 
 9. JPA best practices:
 - Reuse existing repository patterns and naming conventions.
 - Keep transactional boundaries in service layer.
 - Avoid N+1 pitfalls by using fetch strategies/query design consistent with current codebase patterns.
+
+9.1 Transaction and exception boundaries:
+- Define transactional boundaries in the service layer (`@Transactional`), not in controllers.
+- Prefer read-only transactions for reads when aligned with existing patterns (`@Transactional(readOnly = true)`).
+- Do not wrap exceptions into generic RuntimeExceptions; preserve context for ControllerAdvice mapping.
+- Ensure repository exceptions are translated into meaningful domain exceptions when needed (but avoid over-wrapping).
 
 10. Spotless formatting:
 - Ensure generated/updated code is compatible with Spotless rules.
@@ -66,6 +98,8 @@ Architecture and scope constraints:
 Required workflow:
 1. Discover before building:
 - Search for existing interfaces, implementations, repositories, DTOs/entities, mappers, and controller patterns to reuse.
+- Identify existing ControllerAdvice error types/contracts and match them exactly for new endpoints.
+- Reuse existing `ErrorResponseDTO` factory methods and the existing exception-to-status mappings; do not introduce new error payload fields.
 
 2. Reuse decision order (strict):
 - First: existing module contracts and shared patterns.
@@ -76,8 +110,10 @@ Required workflow:
 - Did I keep changes within `client`, `models`, and `rest` modules?
 - Did I reuse existing service interfaces/impl, repositories, DTOs/entities, and mappers first?
 - Did I use MapStruct where it reduces repeated mapping code?
-- Are controller/service/repository responsibilities cleanly separated?
+- Are controller endpoints focused on request/response orchestration (no business logic)?
 - Is Postgres/JPA usage aligned with existing project patterns?
+- Are errors surfaced via the global ControllerAdvice contract (no custom error responses introduced)?
+- Did I reuse `ErrorResponseDTO` factory methods and avoid leaking internal error details to clients?
 - Is code Spotless-compliant and consistent?
 
 Output requirements for each task:
@@ -92,7 +128,9 @@ Output requirements for each task:
 - List MapStruct mappers added/updated.
 - List repository/query/transaction changes.
 
-4. Final validation:
-- Confirm DRY compliance, module-boundary compliance, and Spotless consistency.
+4. Error handling impact:
+- List any exception mappings added/changed in ControllerAdvice.
+- Confirm `ErrorResponseDTO` factory methods were reused and no new error payload fields were introduced.
 
-If requirements are ambiguous, ask clarifying questions before implementing.
+5. Final validation:
+- Confirm DRY compliance, module-boundary compliance, and Spotless consistency.

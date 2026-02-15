@@ -8,85 +8,129 @@ You are working on a Python 3.13 FastAPI service managed with Poetry.
 Follow these guard rails for every backend task.
 
 Primary goals:
-1. Keep code DRY.
-2. Follow FastAPI and Python best practices.
-3. Maintain clean architecture boundaries.
-4. Keep dependency and formatting consistency with Poetry-managed workflows.
+1. Keep code DRY and consistent with existing patterns.
+2. Keep API contracts explicit, stable, and well-typed.
+3. Ensure async correctness and avoid blocking the event loop.
+4. Preserve clean boundaries (API → service/domain → data access).
+5. Add tests to prevent regressions.
 
-Core standards:
+Non-negotiable rules:
+- Do not introduce new libraries, frameworks, or architectural layers unless strictly required.
+- Do not duplicate server state or business rules across layers.
+- Do not return ad-hoc response shapes; use declared response models.
+- Do not leak internal exceptions, stack traces, SQL, hostnames, or secrets to clients.
+
 1. Python and typing:
 - Target Python 3.13 syntax and features where appropriate.
 - Use explicit type hints for public functions, method signatures, and return values.
-- Avoid `Any` unless there is a strong reason.
+- Avoid `Any`; prefer `Unknown`-style narrowing via `object`/Protocols/TypedDict or concrete types.
+- Prefer small, pure functions for transformations; keep them testable.
 
-2. FastAPI patterns:
-- Keep route handlers thin; move business logic to service/domain layers.
-- Use dependency injection (`Depends`) for shared concerns.
-- Use Pydantic models for request/response validation and serialization.
-- Return consistent HTTP status codes and error payloads.
-- Keep endpoint contracts explicit and documented.
+2. FastAPI patterns and API contracts:
+- Keep route handlers thin: validate/authorize → call service → map to response.
+- Every endpoint must declare:
+  - `response_model`
+  - `status_code`
+  - documented error cases (400/401/403/404/409/422/500 as applicable)
+- Use Pydantic models for request/response; do not expose internal ORM/domain objects directly.
+- Prefer dependency injection (`Depends`) for shared concerns (auth, db/session, clients, config).
+- Keep endpoint contracts explicit and version-safe:
+  - do not add/remove fields without considering backward compatibility
+  - default optional fields carefully
 
-3. DRY enforcement:
-- Reuse existing services, helpers, validators, and schemas before adding new ones.
-- Consolidate repeated logic into shared utilities or domain services.
-- Avoid duplicated request parsing, validation, and transformation code.
+2.1 Pagination/filter/sort consistency:
+- For list endpoints, reuse existing pagination/filter/sort conventions.
+- If no convention exists, use a consistent approach:
+  - `page` (1-based) + `size` with bounded max
+  - `sort` as `field:asc|desc`
+  - validate inputs and return 422 on invalid values
 
-4. Data and persistence:
+3. State placement (server vs derived):
+- Server state is owned by the backend; do not mirror it across modules with multiple sources of truth.
+- Cache only when proven necessary and consistent with existing patterns.
+
+4. DRY enforcement:
+- Reuse existing routers, services, helpers, validators, schemas, and tests before adding new ones.
+- Consolidate repeated parsing/validation/transformation into shared utilities or domain services.
+- Avoid copy-pasting similar endpoints; extract shared service logic.
+
+5. Data access and boundaries:
+- Keep persistence logic out of route handlers.
 - Reuse existing repository/data-access patterns.
-- Keep transactional and persistence logic out of route handlers.
-- Keep query/filter/pagination behavior consistent with existing code patterns.
-
-5. Project structure:
-- Separate concerns across API layer, business logic, and data access.
-- Avoid circular imports by keeping module dependencies clean.
-- Keep files and classes focused and single-purpose.
+- Prefer explicit query APIs and projections over returning huge objects.
+- Validate that changes do not introduce N+1 patterns or unbounded queries.
 
 6. Error handling and observability:
-- Use consistent exception handling patterns.
-- Raise domain-meaningful errors and map them to HTTP responses.
-- Add structured logging at meaningful boundaries without leaking sensitive data.
+- Centralize exception-to-HTTP mapping using FastAPI exception handlers (do not handle errors ad-hoc in each route).
+- Raise domain-meaningful exceptions in services; map them at the API boundary.
+- Error responses must be consistent:
+  - stable fields (error code/message)
+  - no internal details in client payload
+- Add structured logging at meaningful boundaries:
+  - request start/end (path, method, status, duration)
+  - key service decision points
+  - external calls (downstream name, status, duration)
+- Never log tokens, cookies, credentials, or full PII payloads.
+
+6.1 Correlation IDs:
+- Preserve/request a correlation/request id header (if the project already uses one).
+- Include it in logs and propagate it to downstream calls where applicable.
 
 7. Performance and async correctness:
 - Use `async`/`await` consistently where I/O is asynchronous.
-- Do not block the event loop with synchronous heavy work.
-- Reuse clients/connections through dependency lifecycles where possible.
+- Never block the event loop:
+  - no synchronous network calls inside async endpoints
+  - no heavy CPU work without offloading
+- Reuse clients/connections through dependency lifecycles.
 
-8. Security basics:
+7.1 External calls:
+- Prefer a single shared async HTTP client (e.g., httpx.AsyncClient) managed via app lifespan or DI.
+- Apply timeouts and retries only if aligned with existing patterns.
+- Normalize downstream errors into domain exceptions mapped by the global handlers.
+
+8. Security basics (authn/authz + input safety):
 - Validate and sanitize inputs at boundaries.
-- Avoid exposing internal exceptions or stack traces in API responses.
-- Keep authn/authz patterns consistent with existing implementation.
+- Keep authn/authz patterns consistent with the existing implementation.
+- Enforce RBAC/entitlements in dependencies or service layer (not scattered across handlers).
+- Return 401 for unauthenticated and 403 for unauthorized.
 
 9. Poetry workflow and consistency:
 - Manage dependencies with Poetry only.
-- Avoid ad hoc dependency management outside `pyproject.toml`.
-- Keep lockfile and dependency declarations aligned when dependencies change.
+- Any dependency change must update `pyproject.toml` and `poetry.lock`.
+- Keep formatting/lint/type-check workflows consistent with the repo (ruff/black/mypy/pytest if present).
 
 10. Testing and quality:
 - Add/update tests for changed behavior.
-- Prioritize unit tests for services/helpers and integration tests for API behavior where relevant.
-- Keep fixtures/factories reusable and DRY.
+- Prefer unit tests for services/helpers and integration tests for API behavior where relevant.
+- Validate:
+  - success path
+  - loading/empty equivalents (if applicable)
+  - error paths (validation/auth/not-found/conflict)
 
 Required workflow:
 1. Discover before building:
-- Search for existing routers, schemas, services, repositories, utilities, and tests to reuse.
+- Search for existing routers, schemas, services, repositories, utilities, exception handlers, and tests to reuse.
+- Identify the existing error response contract and reuse it (do not introduce new error payload fields).
 
 2. Reuse decision order (strict):
 - First: existing project modules and shared helpers.
-- Second: existing service/repository/schema patterns.
+- Second: existing service/repository/schema/exception patterns.
 - Last: create new modules/classes/functions only when reuse is not viable.
 
 3. Before finalizing, run this checklist:
 - Did I reuse existing code paths before creating new ones?
-- Did I keep handlers thin and business logic in services?
-- Are types and Pydantic models explicit and consistent?
+- Are handlers thin and business logic in services?
+- Are request/response models explicit (response_model + status_code)?
 - Is async usage correct and non-blocking?
-- Are errors, logging, and status codes consistent?
+- Are errors routed through global exception handlers with consistent payloads?
+- Are logs structured and free of secrets/PII?
+- Are pagination/filter/sort conventions followed?
 - Are dependency changes Poetry-compliant?
 - Did I avoid avoidable duplication?
 
 Output requirements for each task:
 1. Reuse audit:
-- List existing routers/schemas/services/helpers/tests reused.
+- List existing routers/schemas/services/helpers/handlers/tests reused.
 - If none were reused, explain why.
 
 2. New additions:
@@ -96,11 +140,15 @@ Output requirements for each task:
 - List endpoint contract changes.
 - List service/repository/data-access changes.
 
-4. Dependency and quality impact:
+4. Error handling + observability impact:
+- List exception handlers/mappings added or reused.
+- List correlation/logging changes.
+
+5. Dependency and quality impact:
 - List Poetry dependency changes (if any).
 - List tests added/updated.
 
-5. Final validation:
-- Confirm DRY compliance and Python 3.13/FastAPI best-practice alignment.
+6. Final validation:
+- Confirm DRY compliance, async correctness, and FastAPI/Python 3.13 best-practice alignment.
 
 If requirements are ambiguous, ask clarifying questions before implementing.
