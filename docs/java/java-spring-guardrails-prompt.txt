@@ -1,0 +1,98 @@
+Java Spring Boot Guardrails Prompt (MVC + Lombok + MapStruct + Postgres)
+
+Use this prompt when generating or changing backend code in this repository.
+
+---
+
+You are working on a Java Spring Boot application.
+Follow these guard rails for every backend task.
+
+Primary goals:
+1. Keep code DRY.
+2. Follow Java Spring Boot best practices.
+3. Respect the existing module boundaries and architecture.
+4. Keep formatting consistent with Spotless.
+
+Architecture and scope constraints:
+1. Only work in these modules unless explicitly told otherwise:
+- `client`
+- `models`
+- `rest`
+
+2. Module responsibilities:
+- `client`: API interface layer for controllers and web client interfaces.
+- `models`: DTOs and entities.
+- `rest`: MVC/controller-facing REST implementation.
+
+3. Service layer structure:
+- Use service interfaces and separate service implementations.
+- Keep controllers thin; business logic belongs in services.
+- Use Spring Data JPA repositories for persistence access.
+
+4. Data access:
+- Use PostgreSQL-compatible patterns and types.
+- Avoid database-specific shortcuts that reduce portability unless already established in project conventions.
+
+5. Mapping strategy:
+- Prefer MapStruct for DTO <-> entity mapping when mapping is non-trivial, repeated, or shared.
+- Avoid manual boilerplate mapping when a mapper can be reused.
+- Keep mapper responsibilities focused and testable.
+
+6. Lombok usage:
+- Use Lombok annotations consistently with existing project conventions.
+- Avoid mixing manual boilerplate and Lombok when Lombok already provides the same behavior.
+- Keep generated behavior explicit enough for readability (for example, constructor patterns and immutability choices should be clear).
+
+7. DRY enforcement:
+- Reuse existing DTOs, entities, repositories, services, mappers, and utility logic before creating new ones.
+- Do not duplicate query logic, validation logic, or mapping logic.
+- Consolidate repeated logic into shared service/helper methods where appropriate.
+
+8. MVC and API best practices:
+- Keep controller endpoints focused on request/response orchestration.
+- Validate input at boundaries.
+- Return clear HTTP status codes and consistent response contracts.
+- Handle errors with consistent exception handling patterns used by the project.
+
+9. JPA best practices:
+- Reuse existing repository patterns and naming conventions.
+- Keep transactional boundaries in service layer.
+- Avoid N+1 pitfalls by using fetch strategies/query design consistent with current codebase patterns.
+
+10. Spotless formatting:
+- Ensure generated/updated code is compatible with Spotless rules.
+- Do not introduce style drift from the existing codebase.
+
+Required workflow:
+1. Discover before building:
+- Search for existing interfaces, implementations, repositories, DTOs/entities, mappers, and controller patterns to reuse.
+
+2. Reuse decision order (strict):
+- First: existing module contracts and shared patterns.
+- Second: existing mappers/services/repositories/utilities.
+- Last: create new classes only when no suitable reusable option exists.
+
+3. Before finalizing, run this checklist:
+- Did I keep changes within `client`, `models`, and `rest` modules?
+- Did I reuse existing service interfaces/impl, repositories, DTOs/entities, and mappers first?
+- Did I use MapStruct where it reduces repeated mapping code?
+- Are controller/service/repository responsibilities cleanly separated?
+- Is Postgres/JPA usage aligned with existing project patterns?
+- Is code Spotless-compliant and consistent?
+
+Output requirements for each task:
+1. Reuse audit:
+- List existing classes/interfaces/mappers/repositories reused.
+- If none were reused, explain why.
+
+2. New additions:
+- List any new DTO/entity/repository/service/mapper/controller and why each was necessary.
+
+3. Mapping and persistence impact:
+- List MapStruct mappers added/updated.
+- List repository/query/transaction changes.
+
+4. Final validation:
+- Confirm DRY compliance, module-boundary compliance, and Spotless consistency.
+
+If requirements are ambiguous, ask clarifying questions before implementing.

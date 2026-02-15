@@ -1,0 +1,93 @@
+Java Spring Boot Debugging Guardrails Prompt (MVC + Lombok + MapStruct + Postgres)
+
+Use this prompt when diagnosing bugs, regressions, performance issues, or production incidents in this repository.
+
+---
+
+You are debugging a Java Spring Boot application.
+Follow these guard rails for every debugging task.
+
+Primary goals:
+1. Reproduce first, then fix.
+2. Isolate root cause, not symptoms.
+3. Minimize blast radius of code changes.
+4. Preserve architecture boundaries and module responsibilities.
+5. Leave evidence: tests, logs, and notes that prevent recurrence.
+
+Architecture and scope constraints:
+1. Only work in these modules unless explicitly told otherwise:
+- `client`
+- `models`
+- `rest`
+
+2. Keep responsibilities intact during debugging:
+- Controllers: request/response orchestration only.
+- Services: business logic and transactions.
+- Repositories: persistence access.
+- Mappers: DTO/entity translation.
+
+Required debugging workflow:
+1. Triage and reproduce:
+- Capture exact failing behavior (endpoint, payload, headers, user flow, timestamps).
+- Reproduce with deterministic steps in local/staging before editing code.
+- Record expected vs actual behavior.
+
+2. Narrow the failure surface:
+- Determine layer first: controller, service, mapper, repository, DB, integration client, configuration.
+- Validate assumptions with logs, targeted assertions, and focused queries.
+- Avoid broad refactors while root cause is unknown.
+
+3. Instrument safely:
+- Add temporary, structured debug logs at key boundaries (request entry, service decision points, repository calls).
+- Do not log secrets, tokens, PII, or full sensitive payloads.
+- Remove temporary noisy logs before finalizing unless they provide durable value.
+
+4. Root-cause validation:
+- Prove the root cause with a failing test, reproducible script, or clear before/after evidence.
+- Confirm why related paths are not impacted.
+- If issue is data-dependent, include sample fixtures or migration-safe repro data.
+
+5. Implement minimal fix:
+- Prefer smallest change that resolves root cause.
+- Reuse existing patterns for exception handling, validation, and mapping.
+- Keep transaction boundaries in service layer.
+- Maintain Postgres/JPA compatibility and avoid introducing N+1/perf regressions.
+
+6. Regression hardening:
+- Add or update tests at the lowest effective level:
+  - Unit test for pure business or mapping logic.
+  - Integration test for controller/service/repository interactions.
+- Add assertions for edge cases that exposed the bug.
+
+7. Validate end-to-end:
+- Re-run reproduction steps and confirm fix.
+- Verify non-regression in adjacent endpoints/flows.
+- Ensure code remains Spotless-compatible.
+
+Debugging checklist before finalizing:
+- Did I reproduce the bug before changing code?
+- Did I identify and prove the root cause?
+- Is the fix minimal and architecture-consistent?
+- Are sensitive fields excluded from logs?
+- Did I add/update tests covering the failure and key edge cases?
+- Did I verify no adjacent regressions?
+
+Output requirements for each debugging task:
+1. Reproduction summary:
+- Exact steps, inputs, and environment.
+- Expected vs actual behavior.
+
+2. Root cause:
+- Specific class/method/query/config responsible.
+- Why it failed and under what conditions.
+
+3. Fix summary:
+- Files/classes changed and why.
+- Why this is the minimal safe fix.
+
+4. Validation evidence:
+- Tests added/updated and their intent.
+- Manual/automated checks run.
+- Residual risks (if any).
+
+If root cause cannot be reproduced or isolated, stop and ask for missing signals (logs, payloads, env diffs, versions).

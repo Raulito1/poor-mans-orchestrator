@@ -1,0 +1,106 @@
+Python Development Guardrails Prompt (FastAPI + Python 3.13 + Poetry)
+
+Use this prompt when generating or changing Python backend code in this repository.
+
+---
+
+You are working on a Python 3.13 FastAPI service managed with Poetry.
+Follow these guard rails for every backend task.
+
+Primary goals:
+1. Keep code DRY.
+2. Follow FastAPI and Python best practices.
+3. Maintain clean architecture boundaries.
+4. Keep dependency and formatting consistency with Poetry-managed workflows.
+
+Core standards:
+1. Python and typing:
+- Target Python 3.13 syntax and features where appropriate.
+- Use explicit type hints for public functions, method signatures, and return values.
+- Avoid `Any` unless there is a strong reason.
+
+2. FastAPI patterns:
+- Keep route handlers thin; move business logic to service/domain layers.
+- Use dependency injection (`Depends`) for shared concerns.
+- Use Pydantic models for request/response validation and serialization.
+- Return consistent HTTP status codes and error payloads.
+- Keep endpoint contracts explicit and documented.
+
+3. DRY enforcement:
+- Reuse existing services, helpers, validators, and schemas before adding new ones.
+- Consolidate repeated logic into shared utilities or domain services.
+- Avoid duplicated request parsing, validation, and transformation code.
+
+4. Data and persistence:
+- Reuse existing repository/data-access patterns.
+- Keep transactional and persistence logic out of route handlers.
+- Keep query/filter/pagination behavior consistent with existing code patterns.
+
+5. Project structure:
+- Separate concerns across API layer, business logic, and data access.
+- Avoid circular imports by keeping module dependencies clean.
+- Keep files and classes focused and single-purpose.
+
+6. Error handling and observability:
+- Use consistent exception handling patterns.
+- Raise domain-meaningful errors and map them to HTTP responses.
+- Add structured logging at meaningful boundaries without leaking sensitive data.
+
+7. Performance and async correctness:
+- Use `async`/`await` consistently where I/O is asynchronous.
+- Do not block the event loop with synchronous heavy work.
+- Reuse clients/connections through dependency lifecycles where possible.
+
+8. Security basics:
+- Validate and sanitize inputs at boundaries.
+- Avoid exposing internal exceptions or stack traces in API responses.
+- Keep authn/authz patterns consistent with existing implementation.
+
+9. Poetry workflow and consistency:
+- Manage dependencies with Poetry only.
+- Avoid ad hoc dependency management outside `pyproject.toml`.
+- Keep lockfile and dependency declarations aligned when dependencies change.
+
+10. Testing and quality:
+- Add/update tests for changed behavior.
+- Prioritize unit tests for services/helpers and integration tests for API behavior where relevant.
+- Keep fixtures/factories reusable and DRY.
+
+Required workflow:
+1. Discover before building:
+- Search for existing routers, schemas, services, repositories, utilities, and tests to reuse.
+
+2. Reuse decision order (strict):
+- First: existing project modules and shared helpers.
+- Second: existing service/repository/schema patterns.
+- Last: create new modules/classes/functions only when reuse is not viable.
+
+3. Before finalizing, run this checklist:
+- Did I reuse existing code paths before creating new ones?
+- Did I keep handlers thin and business logic in services?
+- Are types and Pydantic models explicit and consistent?
+- Is async usage correct and non-blocking?
+- Are errors, logging, and status codes consistent?
+- Are dependency changes Poetry-compliant?
+- Did I avoid avoidable duplication?
+
+Output requirements for each task:
+1. Reuse audit:
+- List existing routers/schemas/services/helpers/tests reused.
+- If none were reused, explain why.
+
+2. New additions:
+- List each new module/class/function/schema and why it was necessary.
+
+3. API and data impact:
+- List endpoint contract changes.
+- List service/repository/data-access changes.
+
+4. Dependency and quality impact:
+- List Poetry dependency changes (if any).
+- List tests added/updated.
+
+5. Final validation:
+- Confirm DRY compliance and Python 3.13/FastAPI best-practice alignment.
+
+If requirements are ambiguous, ask clarifying questions before implementing.

@@ -1,0 +1,91 @@
+UI Debugging Guardrails Prompt (React + Vite + TypeScript + RTK Query)
+
+Use this prompt when diagnosing UI bugs, state inconsistencies, API integration issues, performance regressions, or flaky behavior in this repository.
+
+---
+
+You are debugging a React + Vite + TypeScript frontend with RTK Query.
+Follow these guard rails for every debugging task.
+
+Primary goals:
+1. Reproduce first, then fix.
+2. Isolate whether issue is UI, state, cache, network, or backend contract.
+3. Preserve existing component and API-slice architecture.
+4. Apply the smallest safe fix and prevent recurrence.
+5. Keep accessibility and UX states correct after the fix.
+
+Required debugging workflow:
+1. Reproduce deterministically:
+- Capture route, user actions, payloads, role/feature flags, browser, and environment.
+- Record expected vs actual behavior.
+- Reproduce with the smallest possible scenario.
+
+2. Localize the fault:
+- Identify category first:
+  - Rendering logic (component/props/state derivation)
+  - RTK Query data flow (endpoint args, tags, invalidation, stale cache)
+  - API contract mismatch (request/response schema drift)
+  - Timing/race condition (effects, async updates, unmounted updates)
+  - Styling/layout/accessibility regression
+- Confirm with React DevTools, browser network panel, and Redux state inspection.
+
+3. RTK Query-specific checks:
+- Verify endpoint args are stable and correctly typed.
+- Confirm query keys/cache entries match expectations.
+- Validate `providesTags` and `invalidatesTags` behavior.
+- Check whether stale data persists due to missing invalidation or skipped refetch.
+- Ensure duplicate network requests are not triggered by render loops.
+
+4. Instrument safely:
+- Add targeted temporary logs around:
+  - Hook inputs/outputs
+  - Cache invalidation paths
+  - Mutation success/error handlers
+- Keep logs concise and remove temporary noise after diagnosis.
+- Never expose sensitive tokens or private user data.
+
+5. Implement minimal fix:
+- Reuse existing hooks/components/selectors/endpoints before introducing new ones.
+- Keep business logic out of presentational components.
+- Avoid broad refactors unrelated to root cause.
+- Preserve TypeScript strictness; avoid `any` shortcuts.
+
+6. Regression hardening:
+- Add/update tests closest to the failure:
+  - Component behavior tests for UI state transitions.
+  - RTK Query integration tests for cache/invalidation behavior.
+  - Utility/hook tests for transformation or selection logic.
+- Cover loading, error, empty, and success states when relevant.
+
+7. Verify UX and accessibility:
+- Confirm keyboard flow, focus behavior, labels, and aria semantics were not broken.
+- Validate responsive behavior if layout was touched.
+
+Debugging checklist before finalizing:
+- Did I reproduce the bug with clear steps?
+- Did I prove whether root cause was UI, RTK Query/cache, or API contract?
+- Is the fix minimal and aligned with existing patterns?
+- Are loading/error/empty states still correct?
+- Are types strict and explicit?
+- Are accessibility and keyboard interactions preserved?
+- Did I add/update tests to prevent recurrence?
+
+Output requirements for each debugging task:
+1. Reproduction summary:
+- Route/user flow/input data/environment.
+- Expected vs actual behavior.
+
+2. Root cause:
+- File/component/hook/endpoint responsible.
+- Why it failed and trigger conditions.
+
+3. Fix summary:
+- What changed and why it is minimal.
+- RTK Query cache/tag/invalidation impact.
+
+4. Validation evidence:
+- Tests added/updated and scenarios covered.
+- Manual checks performed (including accessibility/UX states).
+- Residual risks (if any).
+
+If bug cannot be reproduced consistently, stop and request missing reproduction artifacts (recording, HAR, payload samples, feature flags, env values).

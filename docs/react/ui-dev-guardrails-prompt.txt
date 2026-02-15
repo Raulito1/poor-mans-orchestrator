@@ -1,0 +1,81 @@
+UI Development Guardrails Prompt (React + Vite + TypeScript + RTK Query)
+
+Use this prompt when generating or changing UI code in this repository.
+
+---
+
+You are working on a React + Vite + TypeScript frontend.
+Follow these guard rails for every UI task.
+
+Primary goals:
+1. Keep code DRY.
+2. Reuse before creating.
+3. Follow React and RTK Query best practices.
+4. Prefer existing internal UI components from MCP when available.
+5. Use shadcn/ui components when internal components do not cover the need.
+
+Required workflow:
+1. Discover before building:
+- Search for existing components, hooks, utilities, and API slices that match the requested feature.
+- Reuse existing patterns, naming, file layout, and styling conventions.
+- Do not create a new component/helper if an equivalent already exists.
+
+2. Reuse decision order (strict):
+- First: MCP internal component library.
+- Second: existing local project components/utilities.
+- Third: shadcn/ui components.
+- Last: create a new custom component only if no reusable option exists.
+
+3. DRY enforcement:
+- Consolidate repeated JSX into reusable components.
+- Consolidate repeated logic into hooks or utility functions.
+- Keep business rules out of presentational components.
+- Avoid copy-pasting query/mutation logic across multiple files.
+
+4. React best practices:
+- Use typed props and avoid `any`.
+- Keep components focused and small.
+- Prefer composition over deep prop drilling.
+- Keep state minimal and colocated.
+- Derive values when possible instead of duplicating state.
+- Use memoization (`useMemo`, `useCallback`, `React.memo`) only when there is a clear render/perf reason.
+- Handle loading, error, empty, and success UI states explicitly.
+- Preserve accessibility: semantic elements, labels, keyboard behavior, and aria attributes where needed.
+
+5. RTK Query best practices:
+- Use centralized API slices and inject endpoints instead of creating ad hoc fetch logic.
+- Reuse existing tags and endpoint patterns before adding new ones.
+- Use `providesTags`/`invalidatesTags` consistently for cache correctness.
+- Keep request/response types explicit and shared.
+- Use `selectFromResult` when needed to reduce rerenders.
+- Avoid dispatching duplicate network calls when cached data is sufficient.
+
+6. Styling and UI consistency:
+- Reuse existing design tokens and utility classes.
+- Keep spacing, typography, and interaction patterns consistent.
+- Prefer variant-driven components over one-off style duplication.
+
+7. Before finalizing any UI change, run this checklist:
+- Did I reuse existing components/hooks/utils first?
+- Did I check MCP internal components before shadcn/custom?
+- Did I avoid duplicated JSX and logic?
+- Is RTK Query integrated using existing API patterns?
+- Are types complete and strict?
+- Are loading/error/empty states handled?
+- Is accessibility preserved?
+
+Output requirements for each task:
+1. Reuse audit:
+- List what existing components/hooks/utils/endpoints were found and reused.
+- If none were reused, explain why.
+
+2. New additions (only if necessary):
+- List each new component/hook/helper and justify why reuse was not possible.
+
+3. RTK Query impact:
+- List endpoints/tags/types added or reused.
+
+4. Final validation:
+- Confirm no avoidable duplication was introduced.
+
+If requirements are ambiguous, ask clarifying questions before implementing.
