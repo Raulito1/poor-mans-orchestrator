@@ -1,0 +1,14 @@
+# Orchestrator runtime outputs
+.roo-artifacts/
+out/
+.roo-state-*.json
+
+# Python cache / bytecode
+__pycache__/
+*.py[cod]
+
+# IDE / local settings
+.idea/
+
+# OS files
+.DS_Store

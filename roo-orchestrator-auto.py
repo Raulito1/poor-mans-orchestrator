@@ -1,33 +1,45 @@
 #!/usr/bin/env python3
 """
-Roo Code Orchestrator - FULLY AUTOMATED Version
-Intelligently breaks down Jira tasks to avoid context window overload (200K tokens)
-WITH automatic DevGPT Cline / Roo Code CLI execution!
+Roo Code Orchestrator - Manual Runbook Version
+Intelligently breaks down Jira tasks and generates deterministic runbook artifacts.
 
-This version can:
-- Generate prompts (manual mode - original behavior)
-- Execute automatically via Roo Code CLI
-- Execute automatically via VS Code REST API (for DevGPT Cline extension)
+This version intentionally uses manual execution only:
+- Generate runbook + scope + command artifacts per phase
+- Show manual prompt for Roo/Codex execution in IDE/CLI plugin
 """
 
 import argparse
 import json
-import subprocess
 import sys
-import os
 import time
-import re
-import shlex
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from enum import Enum
+
+from orchestrator.context_snapshot import snapshot_workspace
+from orchestrator.runbook_renderer import render_phase_bundle
+
+DEBUG_PHASES = {"reproduce", "diagnosis", "testing", "review"}
+
+GUARDRAIL_PROMPT_FILES = {
+    "react": {
+        "dev": Path("docs/react/ui-dev-guardrails-prompt.txt"),
+        "debug": Path("docs/react/ui-debug-guardrails-prompt.txt"),
+    },
+    "python-fastapi": {
+        "dev": Path("docs/python/python-fastapi-guardrails-prompt.txt"),
+        "debug": Path("docs/python/python-fastapi-debug-guardrails-prompt.txt"),
+    },
+    "java-spring": {
+        "dev": Path("docs/java/java-spring-guardrails-prompt.txt"),
+        "debug": Path("docs/java/java-spring-debug-guardrails-prompt.txt"),
+    },
+}
 
 
 class ExecutionMode(Enum):
     """How to execute phases"""
-    MANUAL = "manual"           # Show prompts, user copies to DevGPT Cline
-    ROO_CLI = "roo-cli"        # Execute via Roo Code CLI directly
-    VSCODE_API = "vscode-api"  # Execute via VS Code REST API (DevGPT Cline)
+    MANUAL = "manual"  # Show prompts, user copies to Roo/Codex
 
 
 class TaskType(Enum):
@@ -94,191 +106,7 @@ class ContextBudget:
 
 
 class AutomatedExecutor:
-    """Handles automatic execution of prompts via various methods"""
-    
-    @staticmethod
-    def execute_via_roo_cli(prompt: str, workspace: Path, timeout: int = 600) -> Tuple[bool, str]:
-        """Execute prompt via Roo Code CLI
-        
-        Based on Roo CLI documentation:
-        - Uses Deep AI Agent Architecture with built-in orchestration
-        - Requires workspace to be set (opens in that directory)
-        - Server-based, only one instance per workspace
-        - May need retry if server doesn't connect
-        
-        Args:
-            prompt: The prompt to execute
-            workspace: Working directory (REQUIRED for Roo CLI)
-            timeout: Max execution time in seconds
-            
-        Returns:
-            (success, output) tuple
-        """
-        try:
-            print("\n🤖 Executing via Roo CLI...")
-            print(f"📁 Workspace: {workspace}")
-            
-            # Check if roo-cli is available
-            cli_path = None
-            possible_commands = ["roo-cli", "roo-code", "roo"]
-            
-            for cmd in possible_commands:
-                check = subprocess.run(
-                    ["which", cmd],
-                    capture_output=True,
-                    text=True
-                )
-                if check.returncode == 0:
-                    cli_path = cmd
-                    print(f"✓ Found Roo CLI: {cmd}")
-                    break
-            
-            if not cli_path:
-                return False, "Roo CLI not found. Install from: https://docs.roocode.com/cli/installation"
-            
-            # Prepare prompt file (Roo CLI can read from stdin)
-            prompt_file = workspace / ".roo-temp-prompt.txt"
-            with open(prompt_file, 'w') as f:
-                f.write(prompt)
-            
-            print(f"⏳ Executing (timeout: {timeout}s)...")
-            print("   Note: Roo CLI may take a moment to start server...")
-            
-            # Execute via Roo CLI with workspace set
-            # Note: Roo CLI opens in current dir if no --setWorkspace
-            result = subprocess.run(
-                [cli_path],
-                input=prompt,
-                capture_output=True,
-                text=True,
-                cwd=workspace,  # Run from workspace directory
-                timeout=timeout,
-                env={**os.environ, 'ROO_WORKSPACE': str(workspace)}
-            )
-            
-            # Clean up temp file
-            if prompt_file.exists():
-                prompt_file.unlink()
-            
-            if result.returncode == 0:
-                print("✅ Execution successful!")
-                return True, result.stdout
-            else:
-                error_msg = result.stderr or result.stdout
-                
-                # Check for common issues
-                if "server" in error_msg.lower() and "connect" in error_msg.lower():
-                    print("⚠️  Server connection issue detected")
-                    print("💡 Tip: Try running 'roo-cli' again if this persists")
-                    
-                    # Auto-retry once
-                    print("🔄 Retrying...")
-                    result = subprocess.run(
-                        [cli_path],
-                        input=prompt,
-                        capture_output=True,
-                        text=True,
-                        cwd=workspace,
-                        timeout=timeout,
-                        env={**os.environ, 'ROO_WORKSPACE': str(workspace)}
-                    )
-                    
-                    if result.returncode == 0:
-                        print("✅ Retry successful!")
-                        return True, result.stdout
-                
-                print(f"⚠️  Execution completed with errors")
-                return False, error_msg
-                
-        except subprocess.TimeoutExpired:
-            if prompt_file.exists():
-                prompt_file.unlink()
-            return False, f"Execution timed out after {timeout} seconds. Roo CLI may be processing a large task."
-        except Exception as e:
-            if prompt_file.exists():
-                prompt_file.unlink()
-            return False, f"Execution error: {str(e)}"
-    
-    @staticmethod
-    def execute_via_vscode_api(prompt: str, workspace: Path, mode: str = "Code") -> Tuple[bool, str]:
-        """Execute prompt via VS Code REST API (for DevGPT Cline extension)
-        
-        This sends commands to VS Code's DevGPT Cline extension via REST API.
-        Requires VS Code with DevGPT Cline extension running.
-        
-        Args:
-            prompt: The prompt to execute
-            workspace: Working directory
-            mode: DevGPT Cline mode (Architect, Code, Debug)
-            
-        Returns:
-            (success, output) tuple
-        """
-        try:
-            import urllib.request
-            import urllib.parse
-            
-            print(f"\n🤖 Executing via VS Code DevGPT Cline ({mode} mode)...")
-            
-            # VS Code REST API endpoint (default port)
-            api_url = os.getenv("VSCODE_API_URL", "http://localhost:3000")
-            
-            # Create request to start new task in specified mode
-            data = {
-                "command": "devgpt.startNewTask",
-                "mode": mode,
-                "prompt": prompt,
-                "workspace": str(workspace)
-            }
-            
-            req = urllib.request.Request(
-                f"{api_url}/api/command",
-                data=json.dumps(data).encode('utf-8'),
-                headers={'Content-Type': 'application/json'}
-            )
-            
-            # Send request
-            with urllib.request.urlopen(req, timeout=30) as response:
-                result = json.loads(response.read().decode('utf-8'))
-                
-                if result.get("success"):
-                    task_id = result.get("taskId")
-                    print(f"✅ Task started: {task_id}")
-                    
-                    # Poll for completion
-                    max_wait = 600  # 10 minutes
-                    interval = 5
-                    elapsed = 0
-                    
-                    while elapsed < max_wait:
-                        time.sleep(interval)
-                        elapsed += interval
-                        
-                        # Check task status
-                        status_req = urllib.request.Request(
-                            f"{api_url}/api/task/{task_id}/status"
-                        )
-                        
-                        with urllib.request.urlopen(status_req, timeout=10) as status_response:
-                            status = json.loads(status_response.read().decode('utf-8'))
-                            
-                            if status.get("completed"):
-                                print(f"✅ Task completed after {elapsed}s")
-                                return True, status.get("output", "")
-                            elif status.get("error"):
-                                print(f"⚠️  Task failed: {status.get('error')}")
-                                return False, status.get("error", "")
-                        
-                        print(f"⏳ Waiting... ({elapsed}s elapsed)")
-                    
-                    return False, f"Task timed out after {max_wait}s"
-                else:
-                    return False, result.get("error", "Unknown error")
-                    
-        except urllib.error.URLError as e:
-            return False, f"VS Code API not available: {str(e)}. Is VS Code running with DevGPT Cline?"
-        except Exception as e:
-            return False, f"Execution error: {str(e)}"
+    """Handles manual execution of prompts."""
     
     @staticmethod
     def execute_manual(prompt: str) -> Tuple[bool, str]:
@@ -294,24 +122,22 @@ class AutomatedExecutor:
         
         return True, "Manual execution completed"
 
-
 class RooOrchestrator:
     def __init__(
         self, 
         jira_id: str, 
         task_type: TaskType, 
         workspace_dir: str = ".",
-        execution_mode: ExecutionMode = ExecutionMode.MANUAL,
         max_tokens: int = 8192
     ):
         self.jira_id = jira_id
         self.task_type = task_type
         self.workspace_dir = Path(workspace_dir).resolve()
-        self.execution_mode = execution_mode
         self.max_tokens = max_tokens
         self.state_file = self.workspace_dir / f".roo-state-{jira_id}.json"
         self.state = self._load_state()
         self.executor = AutomatedExecutor()
+        self.repo_snapshot = snapshot_workspace(self.workspace_dir)
         
     def _load_state(self) -> Dict:
         """Load orchestrator state from disk"""
@@ -353,6 +179,32 @@ class RooOrchestrator:
     def _get_mode_recommendation(self, phase: str) -> str:
         """Get recommended DevGPT Cline mode for phase"""
         return ContextBudget.MODE_RECOMMENDATIONS.get(phase, "Code")
+
+    def _guardrail_profile(self) -> str:
+        """Select guardrail profile based on detected repo tooling."""
+        has_java = any(repo.tooling.get("maven") or repo.tooling.get("gradle") for repo in self.repo_snapshot)
+        has_python = any(repo.tooling.get("python_poetry") for repo in self.repo_snapshot)
+        has_node = any(repo.tooling.get("node") for repo in self.repo_snapshot)
+
+        if has_java:
+            return "java-spring"
+        if has_python:
+            return "python-fastapi"
+        if has_node:
+            return "react"
+        return "react"
+
+    def _load_guardrail_prompt(self, phase: str) -> Tuple[str, str]:
+        """Load guardrail prompt text and source path for the given phase."""
+        profile = self._guardrail_profile()
+        variant = "debug" if phase in DEBUG_PHASES else "dev"
+        rel_path = GUARDRAIL_PROMPT_FILES[profile][variant]
+        abs_path = self.workspace_dir / rel_path
+
+        if not abs_path.exists():
+            return "", str(rel_path)
+
+        return abs_path.read_text(encoding="utf-8"), str(rel_path)
     
     def _create_phase_prompt(self, phase: str) -> str:
         """Create a focused prompt for the current phase"""
@@ -666,12 +518,8 @@ OUTPUT FORMAT:
         
         return prompts.get(phase, f"Execute phase: {phase}")
     
-    def run_phase(self, phase: str, auto: bool = True) -> bool:
+    def run_phase(self, phase: str) -> bool:
         """Execute a single phase
-        
-        Args:
-            phase: Phase name to execute
-            auto: If False, always use manual mode regardless of execution_mode
         """
         mode = self._get_mode_recommendation(phase)
         budget = self._get_phase_budget(phase)
@@ -681,39 +529,77 @@ OUTPUT FORMAT:
         print(f"Task Type: {self.task_type.value}")
         print(f"Token Budget: {budget:,}")
         print(f"Recommended Mode: {mode}")
-        print(f"Execution: {self.execution_mode.value if auto else 'manual'}")
+        print(f"Execution: {ExecutionMode.MANUAL.value}")
         print(f"{'='*70}\n")
         
-        # Create artifacts directory
+        # Create legacy artifacts directory
         artifacts_dir = self.workspace_dir / ".roo-artifacts" / self.jira_id
         artifacts_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Get phase prompt
-        prompt = self._create_phase_prompt(phase)
-        
+
+        # Generate deterministic runbook bundle for this phase
+        phases = self._get_phases()
+        phase_index = phases.index(phase) + 1 if phase in phases else len(phases) + 1
+        phase_bundle = render_phase_bundle(
+            workspace=self.workspace_dir,
+            jira_id=self.jira_id,
+            task_type=self.task_type.value,
+            phase=phase,
+            phase_index=phase_index,
+            phase_total=len(phases),
+            budget=budget,
+            mode=mode,
+            repos=self.repo_snapshot,
+        )
+        runbook_path = Path(phase_bundle["runbook_md"])
+        files_path = Path(phase_bundle["files_json"])
+        commands_sh_path = Path(phase_bundle["commands_sh"])
+        report_path = Path(phase_bundle["report_md"])
+        guardrail_prompt, guardrail_source = self._load_guardrail_prompt(phase)
+        guardrail_block = ""
+        if guardrail_prompt:
+            guardrail_block = f"""
+
+APPLY THESE GUARDRAILS (from {guardrail_source}) VERBATIM:
+{guardrail_prompt}
+"""
+        else:
+            guardrail_block = f"""
+
+GUARDRAILS NOTICE:
+- Expected guardrail file not found: {guardrail_source}
+- Proceed with runbook contract only.
+"""
+
+        # Build strict execution prompt around generated runbook artifacts
+        prompt = f"""PHASE {phase_index}/{len(phases)} RUNBOOK EXECUTION: {self.jira_id} ({phase})
+
+Read and follow this runbook strictly:
+- Runbook: {runbook_path}
+- Scope lock: {files_path}
+- Command allowlist: {commands_sh_path}
+- Report template: {report_path}
+
+MANDATORY RULES:
+1. Only modify files allowed by files.json.
+2. Only execute commands from commands.sh/commands.ps1.
+3. Capture command evidence under the phase logs directory.
+4. If a required command fails or scope is insufficient, STOP and document blocker details in report.md.
+5. Do not guess beyond the runbook contract.
+{guardrail_block}
+"""
+
         # Save instruction file
         instruction_file = artifacts_dir / f"phase-{phase}-instructions.txt"
         with open(instruction_file, 'w') as f:
             f.write(prompt)
         print(f"📝 Instructions saved to: {instruction_file}")
+        print(f"📦 Runbook bundle: {phase_bundle['phase_dir']}")
         
         # Execute based on mode
         success = False
         output = ""
         
-        if not auto or self.execution_mode == ExecutionMode.MANUAL:
-            success, output = self.executor.execute_manual(prompt)
-        elif self.execution_mode == ExecutionMode.ROO_CLI:
-            success, output = self.executor.execute_via_roo_cli(
-                prompt, 
-                self.workspace_dir
-            )
-        elif self.execution_mode == ExecutionMode.VSCODE_API:
-            success, output = self.executor.execute_via_vscode_api(
-                prompt,
-                self.workspace_dir,
-                mode
-            )
+        success, output = self.executor.execute_manual(prompt)
         
         # Save execution history
         self.state["execution_history"].append({
@@ -721,10 +607,12 @@ OUTPUT FORMAT:
             "timestamp": time.time(),
             "mode": mode,
             "success": success,
-            "execution_mode": self.execution_mode.value if auto else "manual",
-            "output_length": len(output)
+            "execution_mode": ExecutionMode.MANUAL.value,
+            "output_length": len(output),
+            "runbook_phase_dir": phase_bundle["phase_dir"]
         })
-        
+        self.state.setdefault("artifacts", {})[phase] = phase_bundle
+
         # Save output if available
         if output:
             output_file = artifacts_dir / f"phase-{phase}-output.txt"
@@ -745,7 +633,7 @@ OUTPUT FORMAT:
             
             retry = input("\nRetry this phase? (y/n): ").strip().lower()
             if retry == 'y':
-                return self.run_phase(phase, auto)
+                return self.run_phase(phase)
             
             skip = input("Skip and continue? (y/n): ").strip().lower()
             if skip == 'y':
@@ -756,15 +644,15 @@ OUTPUT FORMAT:
             
             return False
     
-    def run_all(self, auto: bool = True):
+    def run_all(self):
         """Execute all phases for the task"""
         phases = self._get_phases()
         
-        print(f"\n🚀 Starting {'AUTOMATED' if auto and self.execution_mode != ExecutionMode.MANUAL else 'MANUAL'} Orchestrator")
+        print(f"\n🚀 Starting MANUAL Orchestrator")
         print(f"Task: {self.jira_id}")
         print(f"Type: {self.task_type.value}")
         print(f"Phases: {len(phases)}")
-        print(f"Execution Mode: {self.execution_mode.value if auto else 'manual'}")
+        print(f"Execution Mode: {ExecutionMode.MANUAL.value}")
         print(f"Max Tokens: {self.max_tokens:,}")
         
         start_time = time.time()
@@ -776,7 +664,7 @@ OUTPUT FORMAT:
             
             print(f"\n▶️  Phase {i}/{len(phases)}: {phase}")
             
-            if not self.run_phase(phase, auto):
+            if not self.run_phase(phase):
                 print("\n⚠️  Orchestration stopped")
                 return False
         
@@ -793,7 +681,7 @@ OUTPUT FORMAT:
         print(f"\n📊 Status for {self.jira_id}")
         print(f"Task Type: {self.task_type.value}")
         print(f"Progress: {len(completed)}/{len(phases)} phases")
-        print(f"Execution Mode: {self.execution_mode.value}")
+        print(f"Execution Mode: {ExecutionMode.MANUAL.value}")
         print("\nPhases:")
         
         for phase in phases:
@@ -819,19 +707,12 @@ OUTPUT FORMAT:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Roo Code Orchestrator - FULLY AUTOMATED task management",
+        description="Roo Code Orchestrator - manual runbook task management",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # AUTOMATED EXECUTION (via Roo Code CLI)
-  python roo-orchestrator-auto.py --jira PROJ-123 --type feature --execution-mode roo-cli
-  
-  # AUTOMATED via VS Code DevGPT Cline API
-  python roo-orchestrator-auto.py --jira PROJ-123 --type feature --execution-mode vscode-api
-  
-  # MANUAL (original behavior - show prompts)
-  python roo-orchestrator-auto.py --jira PROJ-123 --type feature --execution-mode manual
-  python roo-orchestrator-auto.py --jira PROJ-123 --type feature  # manual is default
+  # MANUAL EXECUTION (runbook prompt shown for copy/paste)
+  python roo-orchestrator-auto.py --jira PROJ-123 --type feature
   
   # Set your maxTokens setting
   python roo-orchestrator-auto.py --jira PROJ-123 --type feature --max-tokens 8192
@@ -855,27 +736,13 @@ Examples:
     parser.add_argument("--status", action="store_true", help="Show status")
     parser.add_argument("--reset", action="store_true", help="Reset state")
     parser.add_argument(
-        "--execution-mode",
-        choices=["manual", "roo-cli", "vscode-api"],
-        default="manual",
-        help="How to execute phases (default: manual)"
-    )
-    parser.add_argument(
         "--max-tokens",
         type=int,
         default=8192,
         help="Your DevGPT Cline maxTokens setting (default: 8192)"
     )
-    parser.add_argument(
-        "--no-auto",
-        action="store_true",
-        help="Disable auto-execution (use manual mode)"
-    )
     
     args = parser.parse_args()
-    
-    # Determine execution mode
-    exec_mode = ExecutionMode(args.execution_mode)
     
     # Determine task type
     orchestrator = None
@@ -890,7 +757,6 @@ Examples:
                 args.jira, 
                 task_type, 
                 args.workspace,
-                exec_mode,
                 args.max_tokens
             )
     elif args.type:
@@ -899,7 +765,6 @@ Examples:
             args.jira, 
             task_type, 
             args.workspace,
-            exec_mode,
             args.max_tokens
         )
     else:
@@ -912,9 +777,9 @@ Examples:
     elif args.status:
         orchestrator.status()
     elif args.phase:
-        orchestrator.run_phase(args.phase, not args.no_auto)
+        orchestrator.run_phase(args.phase)
     else:
-        orchestrator.run_all(not args.no_auto)
+        orchestrator.run_all()
 
 
 if __name__ == "__main__":
