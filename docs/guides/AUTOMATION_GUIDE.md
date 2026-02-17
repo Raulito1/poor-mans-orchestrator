@@ -9,7 +9,7 @@ It generates deterministic runbook artifacts, and you execute Roo/Codex manually
 
 - Supported execution mode: `manual` only
 - Deprecated/removed modes: Roo CLI transport, VS Code API transport, IntelliJ automation transport
-- Source of truth for artifact contract: `docs/RUNBOOK_WORKFLOW.md`
+- Source of truth for artifact contract: `docs/guides/RUNBOOK_WORKFLOW.md`
 
 ## Quick Start
 
@@ -19,7 +19,8 @@ Start a new feature task:
 python3 roo-orchestrator-auto.py \
   --jira PROJ-123 \
   --type feature \
-  --max-tokens 8192
+  --max-tokens 8192 \
+  --strict-enforcement
 ```
 
 Start a new bug task:
@@ -115,6 +116,9 @@ For each phase, Roo/Codex must:
 - `--status`: show current status
 - `--reset`: clear saved state
 - `--max-tokens`: planning hint for iteration sizing
+- `--strict-enforcement`: block phase completion when compliance checks fail
+- `--allow-missing-guardrails`: bypass missing guardrail prompt file failure
+- `--guardrail-profile`: override profile (`react|python-fastapi|java-spring`)
 
 ### Environment Variables
 
@@ -137,6 +141,12 @@ Verify generated phase artifact completeness:
 
 ```bash
 python3 scripts/verify_phase.py out/PROJ-123/phase-03-implementation/phase.json
+```
+
+Run full compliance checks:
+
+```bash
+python3 scripts/verify_phase_compliance.py out/PROJ-123/phase-03-implementation/phase.json
 ```
 
 ## Troubleshooting

@@ -12,7 +12,10 @@
     "artifacts",
     "scope_lock",
     "stop_conditions",
-    "acceptance_checks"
+    "acceptance_checks",
+    "verified",
+    "violations",
+    "required_checks_passed"
   ],
   "properties": {
     "jira_id": { "type": "string" },
@@ -69,6 +72,13 @@
           "required": { "type": "boolean" }
         }
       }
-    }
-  }
+    },
+    "verified": { "type": "boolean" },
+    "violations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required_checks_passed": { "type": "boolean" }
+  },
+  "additionalProperties": false
 }

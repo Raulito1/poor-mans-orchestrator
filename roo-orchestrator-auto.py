@@ -10,16 +10,18 @@ This version intentionally uses manual execution only:
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 
 from orchestrator.context_snapshot import snapshot_workspace
 from orchestrator.runbook_renderer import render_phase_bundle
 
 DEBUG_PHASES = {"reproduce", "diagnosis", "testing", "review"}
+PROMPT_CONTRACT_SCHEMA = Path("schemas/prompt-contract.schema.json")
 
 GUARDRAIL_PROMPT_FILES = {
     "react": {
@@ -35,6 +37,7 @@ GUARDRAIL_PROMPT_FILES = {
         "debug": Path("docs/java/java-spring-debug-guardrails-prompt.txt"),
     },
 }
+GUARDRAIL_PROFILES = tuple(sorted(GUARDRAIL_PROMPT_FILES.keys()))
 
 
 class ExecutionMode(Enum):
@@ -128,12 +131,18 @@ class RooOrchestrator:
         jira_id: str, 
         task_type: TaskType, 
         workspace_dir: str = ".",
-        max_tokens: int = 8192
+        max_tokens: int = 8192,
+        strict_enforcement: bool = False,
+        allow_missing_guardrails: bool = False,
+        guardrail_profile_override: Optional[str] = None,
     ):
         self.jira_id = jira_id
         self.task_type = task_type
         self.workspace_dir = Path(workspace_dir).resolve()
         self.max_tokens = max_tokens
+        self.strict_enforcement = strict_enforcement
+        self.allow_missing_guardrails = allow_missing_guardrails
+        self.guardrail_profile_override = guardrail_profile_override
         self.state_file = self.workspace_dir / f".roo-state-{jira_id}.json"
         self.state = self._load_state()
         self.executor = AutomatedExecutor()
@@ -180,10 +189,13 @@ class RooOrchestrator:
         """Get recommended DevGPT Cline mode for phase"""
         return ContextBudget.MODE_RECOMMENDATIONS.get(phase, "Code")
 
-    def _guardrail_profile(self) -> str:
-        """Select guardrail profile based on detected repo tooling."""
+    def _guardrail_profile(self, phase: Optional[str] = None) -> str:
+        """Select guardrail profile based on override and detected repo tooling."""
+        if self.guardrail_profile_override:
+            return self.guardrail_profile_override
+
         has_java = any(repo.tooling.get("maven") or repo.tooling.get("gradle") for repo in self.repo_snapshot)
-        has_python = any(repo.tooling.get("python_poetry") for repo in self.repo_snapshot)
+        has_python = any(repo.tooling.get("python") for repo in self.repo_snapshot)
         has_node = any(repo.tooling.get("node") for repo in self.repo_snapshot)
 
         if has_java:
@@ -196,15 +208,68 @@ class RooOrchestrator:
 
     def _load_guardrail_prompt(self, phase: str) -> Tuple[str, str]:
         """Load guardrail prompt text and source path for the given phase."""
-        profile = self._guardrail_profile()
+        profile = self._guardrail_profile(phase)
         variant = "debug" if phase in DEBUG_PHASES else "dev"
         rel_path = GUARDRAIL_PROMPT_FILES[profile][variant]
         abs_path = self.workspace_dir / rel_path
 
         if not abs_path.exists():
-            return "", str(rel_path)
+            if self.allow_missing_guardrails:
+                return "", str(rel_path)
+            raise FileNotFoundError(
+                f"Missing required guardrail prompt: {rel_path}. "
+                "Use --allow-missing-guardrails to bypass."
+            )
 
         return abs_path.read_text(encoding="utf-8"), str(rel_path)
+
+    def _load_schema(self, rel_path: Path) -> Dict[str, Any]:
+        schema_path = (self.workspace_dir / rel_path).resolve()
+        with open(schema_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _validate_prompt_contract(self, contract: Dict[str, Any]) -> None:
+        schema = self._load_schema(PROMPT_CONTRACT_SCHEMA)
+        required = schema.get("required", [])
+        properties = schema.get("properties", {})
+
+        missing = [field for field in required if field not in contract]
+        if missing:
+            raise ValueError(f"Prompt contract missing fields: {', '.join(missing)}")
+
+        for field in required:
+            expected_type = properties.get(field, {}).get("type")
+            value = contract[field]
+            if expected_type == "string" and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"Prompt contract field '{field}' must be a non-empty string")
+            if expected_type == "array":
+                if not isinstance(value, list) or not value:
+                    raise ValueError(f"Prompt contract field '{field}' must be a non-empty list")
+                if any(not isinstance(item, str) or not item.strip() for item in value):
+                    raise ValueError(f"Prompt contract field '{field}' must contain non-empty strings")
+
+    def _render_prompt_contract(self, contract: Dict[str, Any]) -> str:
+        return f"""ROLE:
+{contract["role"]}
+
+OBJECTIVE:
+{contract["objective"]}
+
+INPUTS:
+{chr(10).join(f"- {item}" for item in contract["inputs"])}
+
+CONSTRAINTS:
+{chr(10).join(f"- {item}" for item in contract["constraints"])}
+
+ALLOWED ACTIONS:
+{chr(10).join(f"- {item}" for item in contract["allowed_actions"])}
+
+OUTPUT REQUIREMENTS:
+{chr(10).join(f"- {item}" for item in contract["output_requirements"])}
+
+FALLBACK:
+{contract["fallback"]}
+"""
     
     def _create_phase_prompt(self, phase: str) -> str:
         """Create a focused prompt for the current phase"""
@@ -554,39 +619,65 @@ OUTPUT FORMAT:
         files_path = Path(phase_bundle["files_json"])
         commands_sh_path = Path(phase_bundle["commands_sh"])
         report_path = Path(phase_bundle["report_md"])
-        guardrail_prompt, guardrail_source = self._load_guardrail_prompt(phase)
-        guardrail_block = ""
-        if guardrail_prompt:
-            guardrail_block = f"""
+        phase_json = Path(phase_bundle["phase_json"])
+        verify_precheck = subprocess.run(
+            [sys.executable, "scripts/verify_phase.py", str(phase_json)],
+            cwd=str(self.workspace_dir),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if verify_precheck.returncode != 0:
+            print("❌ Phase artifact pre-check failed:")
+            print(verify_precheck.stdout.strip() or verify_precheck.stderr.strip())
+            return False
 
-APPLY THESE GUARDRAILS (from {guardrail_source}) VERBATIM:
-{guardrail_prompt}
-"""
-        else:
-            guardrail_block = f"""
-
-GUARDRAILS NOTICE:
-- Expected guardrail file not found: {guardrail_source}
-- Proceed with runbook contract only.
-"""
-
-        # Build strict execution prompt around generated runbook artifacts
-        prompt = f"""PHASE {phase_index}/{len(phases)} RUNBOOK EXECUTION: {self.jira_id} ({phase})
-
-Read and follow this runbook strictly:
-- Runbook: {runbook_path}
-- Scope lock: {files_path}
-- Command allowlist: {commands_sh_path}
-- Report template: {report_path}
-
-MANDATORY RULES:
-1. Only modify files allowed by files.json.
-2. Only execute commands from commands.sh/commands.ps1.
-3. Capture command evidence under the phase logs directory.
-4. If a required command fails or scope is insufficient, STOP and document blocker details in report.md.
-5. Do not guess beyond the runbook contract.
-{guardrail_block}
-"""
+        try:
+            guardrail_prompt, guardrail_source = self._load_guardrail_prompt(phase)
+        except FileNotFoundError as exc:
+            print(f"❌ {exc}")
+            return False
+        prompt_contract = {
+            "role": f"Runbook executor for Jira {self.jira_id}",
+            "objective": (
+                f"Complete phase {phase_index}/{len(phases)} ({phase}) by following the generated "
+                "runbook contract with verifiable evidence."
+            ),
+            "inputs": [
+                f"Runbook: {runbook_path}",
+                f"Scope lock: {files_path}",
+                f"Command allowlist: {commands_sh_path}",
+                f"Report template: {report_path}",
+                f"Guardrails source: {guardrail_source}",
+            ],
+            "constraints": [
+                "Only modify files allowed by files.json.",
+                "Only execute commands from commands.sh/commands.ps1.",
+                "Capture command evidence under the phase logs directory.",
+                "If required command fails or scope is insufficient, stop and document blocker details in report.md.",
+                "Do not guess beyond the runbook contract.",
+                "Apply guardrail prompt content verbatim.",
+            ],
+            "allowed_actions": [
+                "Read runbook and artifacts for this phase only.",
+                "Edit allowlisted files needed for this phase.",
+                "Execute allowlisted commands and record logs.",
+                "Update report.md with evidence and acceptance outcomes.",
+            ],
+            "output_requirements": [
+                "Report sections completed with concrete evidence links.",
+                "Acceptance checks marked PASS/FAIL/BLOCKED.",
+                "Logs exist for required commands with explicit exit codes.",
+            ],
+            "fallback": (
+                "If blocked, stop work, set acceptance checks to BLOCKED where relevant, and "
+                "document exact blocker and next action in report.md."
+            ),
+        }
+        self._validate_prompt_contract(prompt_contract)
+        prompt = self._render_prompt_contract(prompt_contract) + "\n" + (
+            f"APPLY THESE GUARDRAILS (from {guardrail_source}) VERBATIM:\n{guardrail_prompt}\n"
+        )
 
         # Save instruction file
         instruction_file = artifacts_dir / f"phase-{phase}-instructions.txt"
@@ -600,6 +691,48 @@ MANDATORY RULES:
         output = ""
         
         success, output = self.executor.execute_manual(prompt)
+
+        compliance_output_path = Path(phase_bundle["phase_dir"]) / "compliance.json"
+        compliance_check = subprocess.run(
+            [
+                sys.executable,
+                "scripts/verify_phase_compliance.py",
+                str(phase_json),
+                "--output",
+                str(compliance_output_path),
+            ],
+            cwd=str(self.workspace_dir),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        compliance_result: Dict[str, Any] = {
+            "verified": False,
+            "required_checks_passed": False,
+            "violations": [f"Compliance verifier failed to run (exit {compliance_check.returncode})"],
+        }
+        if compliance_output_path.exists():
+            with open(compliance_output_path, "r", encoding="utf-8") as f:
+                compliance_result = json.load(f)
+        elif compliance_check.stdout.strip():
+            try:
+                compliance_result = json.loads(compliance_check.stdout)
+            except json.JSONDecodeError:
+                pass
+
+        try:
+            with open(phase_json, "r", encoding="utf-8") as f:
+                phase_manifest = json.load(f)
+            phase_manifest["verified"] = bool(compliance_result.get("verified", False))
+            phase_manifest["violations"] = list(compliance_result.get("violations", []))
+            phase_manifest["required_checks_passed"] = bool(
+                compliance_result.get("required_checks_passed", False)
+            )
+            with open(phase_json, "w", encoding="utf-8") as f:
+                json.dump(phase_manifest, f, indent=2)
+        except OSError:
+            pass
         
         # Save execution history
         self.state["execution_history"].append({
@@ -609,7 +742,8 @@ MANDATORY RULES:
             "success": success,
             "execution_mode": ExecutionMode.MANUAL.value,
             "output_length": len(output),
-            "runbook_phase_dir": phase_bundle["phase_dir"]
+            "runbook_phase_dir": phase_bundle["phase_dir"],
+            "compliance": compliance_result,
         })
         self.state.setdefault("artifacts", {})[phase] = phase_bundle
 
@@ -620,13 +754,25 @@ MANDATORY RULES:
                 f.write(output)
             print(f"💾 Output saved to: {output_file}")
         
-        if success:
+        compliance_ok = bool(compliance_result.get("verified", False))
+        if success and (compliance_ok or not self.strict_enforcement):
             # Update state
             self.state["phases_completed"].append(phase)
             self.state["current_phase"] = phase
             self._save_state()
+            if not compliance_ok:
+                violations = compliance_result.get("violations", [])
+                print("\n⚠️  Compliance violations recorded (audit mode):")
+                for item in violations:
+                    print(f"  - {item}")
             print(f"\n✅ Phase '{phase}' completed successfully!")
             return True
+        elif success and not compliance_ok:
+            print(f"\n❌ Phase '{phase}' failed compliance verification")
+            for item in compliance_result.get("violations", []):
+                print(f"  - {item}")
+            self._save_state()
+            return False
         else:
             print(f"\n⚠️  Phase '{phase}' completed with issues")
             print(f"Output: {output[:500]}...")
@@ -654,6 +800,7 @@ MANDATORY RULES:
         print(f"Phases: {len(phases)}")
         print(f"Execution Mode: {ExecutionMode.MANUAL.value}")
         print(f"Max Tokens: {self.max_tokens:,}")
+        print(f"Strict Enforcement: {self.strict_enforcement}")
         
         start_time = time.time()
         
@@ -682,6 +829,7 @@ MANDATORY RULES:
         print(f"Task Type: {self.task_type.value}")
         print(f"Progress: {len(completed)}/{len(phases)} phases")
         print(f"Execution Mode: {ExecutionMode.MANUAL.value}")
+        print(f"Strict Enforcement: {self.strict_enforcement}")
         print("\nPhases:")
         
         for phase in phases:
@@ -741,6 +889,21 @@ Examples:
         default=8192,
         help="Your DevGPT Cline maxTokens setting (default: 8192)"
     )
+    parser.add_argument(
+        "--strict-enforcement",
+        action="store_true",
+        help="Block phase completion when compliance verification fails",
+    )
+    parser.add_argument(
+        "--allow-missing-guardrails",
+        action="store_true",
+        help="Allow execution when expected guardrail prompt file is missing",
+    )
+    parser.add_argument(
+        "--guardrail-profile",
+        choices=GUARDRAIL_PROFILES,
+        help="Override auto-detected guardrail profile",
+    )
     
     args = parser.parse_args()
     
@@ -757,7 +920,10 @@ Examples:
                 args.jira, 
                 task_type, 
                 args.workspace,
-                args.max_tokens
+                args.max_tokens,
+                args.strict_enforcement,
+                args.allow_missing_guardrails,
+                args.guardrail_profile,
             )
     elif args.type:
         task_type = TaskType(args.type)
@@ -765,7 +931,10 @@ Examples:
             args.jira, 
             task_type, 
             args.workspace,
-            args.max_tokens
+            args.max_tokens,
+            args.strict_enforcement,
+            args.allow_missing_guardrails,
+            args.guardrail_profile,
         )
     else:
         print("Error: --type required for new tasks")

@@ -21,7 +21,7 @@ Design goals:
 4. Orchestrator sends Roo a strict prompt pointing at generated runbook artifacts.
 5. Roo executes phase following runbook contract.
 6. Roo fills report and logs command evidence.
-7. Optional verifier checks phase artifact completeness.
+7. Orchestrator runs compliance verification and records pass/fail evidence.
 
 ## Generated Artifacts Per Phase
 
@@ -36,6 +36,7 @@ Files:
 - `report.md`: completion template Roo must fill
 - `phase.json`: machine-readable manifest tying all artifacts together
 - `logs/`: command output evidence (created by command scripts)
+- `compliance.json`: verifier result (generated after manual phase execution)
 
 Legacy compatibility:
 - `.roo-artifacts/{JIRA}/phase-*-instructions.txt` is still written for execution history.
@@ -85,6 +86,7 @@ If required changes are outside allowlist, Roo should not proceed with ad-hoc ed
 - Scope lock metadata
 - Stop conditions
 - Acceptance checks
+- Verification fields (`verified`, `violations`, `required_checks_passed`)
 
 Schema reference:
 - `schemas/phase-output.schema.json`
@@ -95,6 +97,9 @@ Start full task:
 
 ```bash
 python3 roo-orchestrator-auto.py --jira PROJ-123 --type feature
+
+# optional strict enforcement (block completion on compliance failures)
+python3 roo-orchestrator-auto.py --jira PROJ-123 --type feature --strict-enforcement
 ```
 
 Run one phase:
@@ -109,6 +114,12 @@ Resume existing task:
 python3 roo-orchestrator-auto.py --jira PROJ-123
 ```
 
+Guardrail profile override:
+
+```bash
+python3 roo-orchestrator-auto.py --jira PROJ-123 --guardrail-profile python-fastapi
+```
+
 ## Verify Phase Bundle
 
 Minimal verifier:
@@ -119,19 +130,21 @@ python3 scripts/verify_phase.py out/PROJ-123/phase-03-implementation/phase.json
 
 This validates required top-level fields and artifact file existence.
 
+Compliance verifier (scope/log/report checks):
+
+```bash
+python3 scripts/verify_phase_compliance.py out/PROJ-123/phase-03-implementation/phase.json
+```
+
 ## State + Output Locations
 
 - State: `.roo-state-{JIRA}.json`
 - Legacy instruction/output: `.roo-artifacts/{JIRA}/`
 - Runbook bundle: `out/{JIRA}/phase-XX-{phase}/`
 
-## Current Limitations (Iteration 1)
+## Enforcement Modes
 
-- Scope lock is defined but not yet enforced against actual git diff automatically.
-- Verifier checks artifact completeness, not semantic correctness.
-- Existing prompt templates still exist in code for backward compatibility.
-
-Planned next steps:
-- enforce changed-file scope checks
-- validate required command logs and report completion
-- stronger phase typing and tests
+- Default mode is audit: compliance violations are recorded but do not block phase completion.
+- `--strict-enforcement` blocks completion unless compliance verification passes.
+- Missing guardrail prompt files fail closed by default.
+- `--allow-missing-guardrails` explicitly overrides missing guardrail prompt failures.

@@ -327,10 +327,15 @@ def _render_report_template(
 ## Acceptance Checks
 
 <!-- Mark each check as PASS/FAIL/BLOCKED with evidence -->
+- commands_passed: BLOCKED - add evidence link from ./logs
+- scope_respected: BLOCKED - list changed files
+- report_completed: BLOCKED - summarize completeness and residual risks
 
 ## Blockers / Next Steps
 
 <!-- If stopped, include actionable next step and owner -->
+
+<!-- completion_marker: INCOMPLETE -->
 """
 
 
@@ -483,6 +488,9 @@ def render_phase_bundle(
                 "required": True,
             },
         ],
+        "verified": False,
+        "violations": [],
+        "required_checks_passed": False,
     }
 
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

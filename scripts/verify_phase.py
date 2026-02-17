@@ -16,6 +16,9 @@ REQUIRED_PHASE_FIELDS = {
     "scope_lock",
     "stop_conditions",
     "acceptance_checks",
+    "verified",
+    "violations",
+    "required_checks_passed",
 }
 
 

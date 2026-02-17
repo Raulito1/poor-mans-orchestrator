@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReportContract",
+  "type": "object",
+  "required": [
+    "summary",
+    "files_touched",
+    "command_results",
+    "acceptance_checks",
+    "blockers_next_steps"
+  ],
+  "properties": {
+    "summary": { "type": "string", "minLength": 1 },
+    "files_touched": { "type": "string", "minLength": 1 },
+    "command_results": { "type": "string", "minLength": 1 },
+    "acceptance_checks": { "type": "string", "minLength": 1 },
+    "blockers_next_steps": { "type": "string", "minLength": 1 }
+  },
+  "additionalProperties": false
+}

@@ -37,9 +37,17 @@ def _discover_repo_roots(workspace: Path) -> List[Path]:
 
 
 def _tooling_flags(repo_root: Path) -> Dict[str, bool]:
+    has_pyproject = (repo_root / "pyproject.toml").exists()
+    has_requirements = (repo_root / "requirements.txt").exists()
+    has_setup_py = (repo_root / "setup.py").exists()
+    has_pipfile = (repo_root / "Pipfile").exists()
     return {
         "node": (repo_root / "package.json").exists(),
-        "python_poetry": (repo_root / "pyproject.toml").exists(),
+        "python_poetry": has_pyproject,
+        "python_requirements": has_requirements,
+        "python_setup_py": has_setup_py,
+        "python_pipfile": has_pipfile,
+        "python": has_pyproject or has_requirements or has_setup_py or has_pipfile,
         "maven": (repo_root / "pom.xml").exists() or (repo_root / "mvnw").exists(),
         "gradle": (repo_root / "build.gradle").exists() or (repo_root / "build.gradle.kts").exists() or (repo_root / "gradlew").exists(),
         "terraform": any(repo_root.glob("**/*.tf")),
