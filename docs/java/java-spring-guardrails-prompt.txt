@@ -46,6 +46,16 @@ Architecture and scope constraints:
 - Avoid mixing manual boilerplate and Lombok when Lombok already provides the same behavior.
 - Keep generated behavior explicit enough for readability (for example, constructor patterns and immutability choices should be clear).
 
+6.1 Immutability and `final` keyword guardrails:
+- Default to immutability when generating or touching code.
+- Fields should be marked `final` unless mutation is explicitly required by design.
+- Prefer constructor injection with `final` fields for all Spring-managed dependencies.
+- Avoid introducing new mutable state (setters/public fields/reassignable dependencies) as a quick fix.
+- Use `final` for method parameters and local variables when it improves clarity or prevents accidental reassignment; do not apply `final` mechanically where it adds noise.
+- Do not mark Spring components (`@Service`, `@Component`, `@Controller`, `@Repository`) as `final` unless proxying behavior is fully understood and verified.
+- Use `final` methods only to enforce invariants or prevent unsafe overrides.
+- Lombok alignment: prefer patterns that reinforce immutability (`@RequiredArgsConstructor`, `@Value`) where appropriate; avoid Lombok-generated setters unless mutation is intentional and justified.
+
 7. DRY enforcement:
 - Reuse existing DTOs, entities, repositories, services, mappers, and utility logic before creating new ones.
 - Do not duplicate query logic, validation logic, or mapping logic.
