@@ -17,6 +17,33 @@ Primary goals:
 5. Prevent recurrence with tests or assertions at the correct layer.
 
 Architecture and scope constraints:
+Immutability and `final` keyword guardrails:
+```
+Immutability and `final` keyword guardrails:
+1. Default to immutability when fixing or touching code.
+   - Fields should be marked `final` unless mutation is explicitly required by design.
+   - Prefer constructor injection with `final` fields for all Spring-managed dependencies.
+
+2. Do not introduce new mutable state while debugging.
+   - Avoid adding setters, public field access, or reassignable dependencies as a quick fix.
+   - If state must change, document why immutability is not viable in this case.
+
+3. Method and local variable discipline:
+   - Use `final` for method parameters and local variables when it improves clarity or prevents accidental reassignment.
+   - Do not apply `final` mechanically where it adds noise without intent.
+
+4. Class and method finality:
+   - Do not mark Spring components (`@Service`, `@Component`, `@Controller`, `@Repository`) as `final` unless proxying behavior is fully understood and verified.
+   - Use `final` methods only to enforce invariants or prevent unsafe overrides.
+
+5. Lombok alignment:
+   - Prefer Lombok patterns that reinforce immutability (`@RequiredArgsConstructor`, `@Value`) where appropriate.
+   - Avoid Lombok-generated setters in domain, DTO, and service classes unless mutation is intentional and justified.
+
+6. Review check:
+   - Any fix that introduces or removes `final` must be intentional and defensible.
+   - Be prepared to explain how the chosen mutability model supports correctness, thread-safety, and maintainability.
+```
 1. Only work in these modules unless explicitly told otherwise:
 - `client`
 - `models`
