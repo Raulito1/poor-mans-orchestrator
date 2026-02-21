@@ -1,35 +1,43 @@
-You are a senior AWS/ECS platform engineer. Perform a production-grade analysis of this repository’s ECS Fargate + load balancer infrastructure and identify why a deployed service might not return HTTP 200.
+You are a senior full-stack engineer with strong AWS ECS experience. Analyze the Node BFF + Vite React web app service in this repo to determine why the container does not return HTTP 200 as expected when deployed behind an ALB.
 
 CONTEXT
-- Platform: AWS ECS on Fargate
-- Ingress: Application Load Balancer (ALB) using host-based routing
-- Current symptom: service/task is “running” and target may appear healthy, but hitting the hostname does not return expected 200 (often 404/502/503).
-- I need exact root causes and precise fixes.
+- Deployed on ECS Fargate behind ALB host-based routing.
+- Target group may be HTTPS:8080 (or similar).
+- Symptom: no 200 from the service when called through ALB/DNS. Possibly 404/502/503.
+- The Node service serves the built React assets and exposes API endpoints that proxy to an internal Python FastAPI service.
 
-SCOPE
-1) Terraform:
-    - ALB: listeners, listener rules, certificates, default actions, host/path rules, priority, target groups, health checks
-    - Target groups: protocol/port (HTTP vs HTTPS), health check protocol/path/matcher, deregistration delay
-    - ECS services: load_balancer blocks, container_name/container_port, service discovery, desired count, deployment settings
-    - Networking: VPC, subnets (public/private), NAT, routing tables, ALB scheme (internet-facing vs internal)
-    - Security groups: ALB SG inbound/outbound rules, service SG inbound from ALB SG, service-to-service SG
-    - IAM: task execution role, task role, permissions for logs/secrets/ssm
-    - CloudWatch: log groups, retention, alarms (if defined)
-
-2) Runtime AWS verification checklist (what to click/validate in console):
-    - ECS service events, target group registered targets, ALB listener rule matching, DNS records/alias, certificate coverage
-    - How to confirm if a request is hitting the intended rule and target group
+WHAT TO CHECK (MUST)
+1) Container/server binding:
+   - Ensure Node listens on 0.0.0.0 (not localhost)
+   - Verify PORT env var handling and mapping to containerPort in task definition
+   - Confirm process startup command and working directory
+2) Routes and health endpoint:
+   - Confirm /health exists and returns 200
+   - Confirm ALB health check path matches
+   - Confirm SPA routing fallback (serving index.html) and static asset paths
+3) TLS:
+   - If target group is HTTPS→container, confirm Node is actually serving HTTPS on that port (certs?) OR recommend switching TG to HTTP and terminate TLS at ALB only
+4) Reverse proxy to FastAPI:
+   - Ensure BFF uses internal DNS/service discovery and correct scheme/port
+   - Timeouts, retries, and error handling (avoid leaking internals)
+5) Build + runtime:
+   - Confirm Vite build output is included in container image
+   - Confirm Node serves correct directory
+   - Dockerfile multi-stage best practices; avoid dev server in production
+6) Logging:
+   - Ensure request logs exist (at least access logs) to confirm traffic hits container
+   - Identify where CloudWatch logs are configured
 
 DELIVERABLE
-- A table of findings with: Severity (Blocker/High/Med/Low), Evidence (exact file/resource names), Root cause, Fix (exact Terraform changes).
-- A “fast path” troubleshooting flow for 404 vs 502 vs 503 vs timeout, tailored to ALB+ECS.
-- A final section: “Most likely causes for not getting 200 in this repo” with ranked probabilities and why.
+- Root cause candidates ranked by likelihood with repo evidence.
+- Exact code changes for:
+   - adding a /health endpoint
+   - binding to 0.0.0.0 and correct PORT
+   - serving SPA with fallback
+- Exact container/Dockerfile changes if needed.
+- A minimal “curl tests” list to run locally and inside the task (including container-level curl).
+- A short checklist to validate ALB → container → node route.
 
 CONSTRAINTS
-- Do not propose re-architecting (no “move to EKS” etc.). Fix within ECS/ALB/Terraform.
-- Be explicit: reference the Terraform resources and settings in this repo.
-
-START HERE
-1) Identify where Terraform defines ALB, listeners, listener rules, target groups, ECS services/tasks.
-2) Trace the request path: DNS → ALB listener → rule match → target group → task ENI → container port → app route.
-3) Confirm health check alignment (protocol/path/matcher) with the app.
+- Keep it maintainable and production-oriented.
+- Prefer simple Node setup (Express/Fastify) and minimal changes.
